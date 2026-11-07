@@ -142,12 +142,24 @@ const envSchema = z
     GOOGLE_MEET_CLIENT_ID: optionalString,
     GOOGLE_MEET_CLIENT_SECRET: optionalString,
     GOOGLE_MEET_REFRESH_TOKEN: optionalString,
+
+    // --- File storage: Cloudinary (Recruitment resume storage) -----------------------------
+    // Credentials from Cloudinary Dashboard. Required in production; optional in development.
+    // Secrets: never logged, echoed in validation messages or sent to the browser.
+    CLOUDINARY_CLOUD_NAME: optionalString,
+    CLOUDINARY_API_KEY: optionalString,
+    CLOUDINARY_API_SECRET: optionalString,
   })
   .transform((env) => ({
     ...env,
     AUTH_COOKIE_SECURE: env.AUTH_COOKIE_SECURE ?? !['development', 'test'].includes(env.NODE_ENV),
     EMAIL_TRANSPORT: env.EMAIL_TRANSPORT ?? (env.NODE_ENV === 'test' ? 'memory' : 'console'),
     RATE_LIMIT_STORE: env.RATE_LIMIT_STORE ?? (env.NODE_ENV === 'test' ? 'memory' : 'redis'),
+    isCloudinaryConfigured: Boolean(
+      env.CLOUDINARY_CLOUD_NAME?.trim() &&
+      env.CLOUDINARY_API_KEY?.trim() &&
+      env.CLOUDINARY_API_SECRET?.trim(),
+    ),
   }))
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== 'production') return;
@@ -264,6 +276,42 @@ const envSchema = z
         message: 'SameSite=None requires AUTH_COOKIE_SECURE=true',
       });
     }
+  })
+  .superRefine((env, ctx) => {
+    // Cloudinary credentials (recruitment resume storage)
+    const cloudinary = {
+      CLOUDINARY_CLOUD_NAME: env.CLOUDINARY_CLOUD_NAME?.trim(),
+      CLOUDINARY_API_KEY: env.CLOUDINARY_API_KEY?.trim(),
+      CLOUDINARY_API_SECRET: env.CLOUDINARY_API_SECRET?.trim(),
+    };
+    if (env.NODE_ENV === 'production') {
+      // Production resume uploads must use Cloudinary (hosted container storage is ephemeral;
+      // local disk fallback would lose files on container restart/sleep).
+      for (const [name, value] of Object.entries(cloudinary)) {
+        if (!value) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [name],
+            message: `${name} is required in production for Cloudinary resume storage`,
+          });
+        }
+      }
+    } else {
+      // In development/test, Cloudinary is optional; if partially configured, all three must be set together.
+      const set = Object.values(cloudinary).filter(Boolean).length;
+      if (set > 0 && set < 3) {
+        for (const [name, value] of Object.entries(cloudinary)) {
+          if (!value) {
+            ctx.addIssue({
+              code: 'custom',
+              path: [name],
+              message:
+                'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET must be set together',
+            });
+          }
+        }
+      }
+    }
   });
 
 /** Validates an environment without side effects (tests use this; the module parses process.env). */
@@ -288,6 +336,9 @@ export const env = {
   // Normalised to bare origins (scheme://host[:port]) so they compare equal to `Origin` headers.
   corsOrigins: (raw.CORS_ORIGINS?.length ? raw.CORS_ORIGINS : [raw.NEXT_PUBLIC_APP_URL]).map(
     (origin) => new URL(origin).origin,
+  ),
+  isCloudinaryConfigured: Boolean(
+    raw.CLOUDINARY_CLOUD_NAME && raw.CLOUDINARY_API_KEY && raw.CLOUDINARY_API_SECRET,
   ),
 } as const;
 
