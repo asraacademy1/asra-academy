@@ -35,6 +35,10 @@ for (const name of [
   'GOOGLE_MEET_CLIENT_ID',
   'GOOGLE_MEET_CLIENT_SECRET',
   'GOOGLE_MEET_REFRESH_TOKEN',
+  // File storage (recruitment resumes): tests use in-memory storage unless explicitly testing Cloudinary.
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
 ]) {
   process.env[name] = '';
 }

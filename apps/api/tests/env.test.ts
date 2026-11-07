@@ -16,6 +16,12 @@ const resend = {
   EMAIL_FROM: 'ASRA Academy <no-reply@example.com>',
 };
 
+const cloudinary = {
+  CLOUDINARY_CLOUD_NAME: 'asra-cloud',
+  CLOUDINARY_API_KEY: '123456789012345',
+  CLOUDINARY_API_SECRET: 'cloudinary_secret_key_123',
+};
+
 function issuePaths(source: Record<string, string | undefined>): string[] {
   const result = parseEnv(source);
   assert.equal(result.success, false, 'expected the environment to be rejected');
@@ -63,23 +69,25 @@ describe('email configuration', () => {
   it('refuses to start in production without Resend (unset, console or memory)', () => {
     for (const EMAIL_TRANSPORT of [undefined, 'console', 'memory']) {
       assert.deepEqual(
-        issuePaths({ ...base, NODE_ENV: 'production', EMAIL_TRANSPORT }),
+        issuePaths({ ...base, ...cloudinary, NODE_ENV: 'production', EMAIL_TRANSPORT }),
         ['EMAIL_TRANSPORT'],
         String(EMAIL_TRANSPORT),
       );
     }
   });
 
-  it('starts in production with a complete Resend configuration', () => {
-    const result = parseEnv({ ...base, ...resend, NODE_ENV: 'production' });
+  it('starts in production with a complete Resend and Cloudinary configuration', () => {
+    const result = parseEnv({ ...base, ...resend, ...cloudinary, NODE_ENV: 'production' });
     assert.equal(result.success, true);
     assert.equal(result.data?.AUTH_COOKIE_SECURE, true);
+    assert.equal(result.data?.isCloudinaryConfigured, true);
   });
 
   it('never echoes the API key in validation errors', () => {
     const result = parseEnv({
       ...base,
       ...resend,
+      ...cloudinary,
       NODE_ENV: 'production',
       EMAIL_FROM: 'bad-sender',
       AUTH_COOKIE_SECURE: 'false',
@@ -87,6 +95,99 @@ describe('email configuration', () => {
     assert.equal(result.success, false);
     const reported = z.prettifyError(result.error!) + JSON.stringify(result.error!.issues);
     assert.ok(!reported.includes(RESEND_KEY));
+  });
+});
+
+describe('Cloudinary configuration', () => {
+  it('is optional in development and test environments when unset', () => {
+    const development = parseEnv({ ...base, NODE_ENV: 'development' });
+    const test = parseEnv({ ...base, NODE_ENV: 'test' });
+    assert.equal(development.success, true);
+    assert.equal(test.success, true);
+    assert.equal(development.data?.isCloudinaryConfigured, false);
+    assert.equal(test.data?.isCloudinaryConfigured, false);
+  });
+
+  it('accepts complete Cloudinary configuration in development and test', () => {
+    const development = parseEnv({ ...base, ...cloudinary, NODE_ENV: 'development' });
+    const test = parseEnv({ ...base, ...cloudinary, NODE_ENV: 'test' });
+    assert.equal(development.success, true);
+    assert.equal(test.success, true);
+    assert.equal(development.data?.isCloudinaryConfigured, true);
+    assert.equal(test.data?.isCloudinaryConfigured, true);
+  });
+
+  it('rejects partial Cloudinary configuration in development, requiring all three to be set together', () => {
+    for (const missing of [
+      'CLOUDINARY_CLOUD_NAME',
+      'CLOUDINARY_API_KEY',
+      'CLOUDINARY_API_SECRET',
+    ]) {
+      const partial = { ...cloudinary, [missing]: '' };
+      assert.deepEqual(issuePaths({ ...base, ...partial, NODE_ENV: 'development' }), [missing]);
+    }
+  });
+
+  it('refuses to start in production without Cloudinary configuration', () => {
+    assert.deepEqual(issuePaths({ ...base, ...resend, NODE_ENV: 'production' }), [
+      'CLOUDINARY_CLOUD_NAME',
+      'CLOUDINARY_API_KEY',
+      'CLOUDINARY_API_SECRET',
+    ]);
+  });
+
+  it('refuses to start in production when any Cloudinary variable is missing or empty', () => {
+    for (const missing of [
+      'CLOUDINARY_CLOUD_NAME',
+      'CLOUDINARY_API_KEY',
+      'CLOUDINARY_API_SECRET',
+    ]) {
+      const partial = { ...cloudinary, [missing]: '   ' };
+      assert.deepEqual(issuePaths({ ...base, ...resend, ...partial, NODE_ENV: 'production' }), [
+        missing,
+      ]);
+    }
+  });
+
+  it('never echoes CLOUDINARY_API_SECRET in validation errors', () => {
+    const secret = 'super_secret_cloudinary_credential_never_print_this';
+    const result = parseEnv({
+      ...base,
+      ...resend,
+      ...cloudinary,
+      CLOUDINARY_API_SECRET: secret,
+      NODE_ENV: 'production',
+      EMAIL_FROM: 'bad-sender',
+    });
+    assert.equal(result.success, false);
+    const reported = z.prettifyError(result.error!) + JSON.stringify(result.error!.issues);
+    assert.ok(!reported.includes(secret));
+  });
+});
+
+describe('JWT_SECRET configuration', () => {
+  it('requires JWT_SECRET in all environments', () => {
+    assert.deepEqual(issuePaths({ ...base, JWT_SECRET: '' }), ['JWT_SECRET']);
+    assert.deepEqual(issuePaths({ ...base, JWT_SECRET: undefined }), ['JWT_SECRET']);
+  });
+
+  it('requires JWT_SECRET to be at least 32 characters', () => {
+    assert.deepEqual(issuePaths({ ...base, JWT_SECRET: 'short-secret-under-32-chars' }), [
+      'JWT_SECRET',
+    ]);
+  });
+
+  it('accepts strong JWT_SECRET >= 32 characters', () => {
+    const result = parseEnv({ ...base, JWT_SECRET: 'x'.repeat(48) });
+    assert.equal(result.success, true);
+  });
+
+  it('never echoes JWT_SECRET in validation errors', () => {
+    const rawSecret = 'short-secret-12345';
+    const result = parseEnv({ ...base, JWT_SECRET: rawSecret });
+    assert.equal(result.success, false);
+    const reported = z.prettifyError(result.error!) + JSON.stringify(result.error!.issues);
+    assert.ok(!reported.includes(rawSecret));
   });
 });
 

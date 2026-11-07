@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { env } from '../../config/env.js';
 import { AppError } from '../../utils/app-error.js';
 import { logger } from '../../lib/logger.js';
 
@@ -21,27 +22,53 @@ export interface UploadResumeResult extends StoredResumeMetadata {
   uploadToken: string;
 }
 
-class ResumeStorageService {
+export interface ResumeStorageOptions {
+  cloudinaryCloudName?: string;
+  cloudinaryApiKey?: string;
+  cloudinaryApiSecret?: string;
+  jwtSecret?: string;
+  isProduction?: boolean;
+  localUploadsDir?: string;
+  fetchImpl?: typeof fetch;
+}
+
+export class ResumeStorageService {
   private localUploadsDir: string;
+  private cloudinaryCloudName?: string;
+  private cloudinaryApiKey?: string;
+  private cloudinaryApiSecret?: string;
+  private jwtSecret?: string;
+  private isProduction: boolean;
+  private fetchImpl: typeof fetch;
   private inMemoryResumes: Map<string, { buffer: Buffer; metadata: StoredResumeMetadata }> =
     new Map();
 
-  constructor() {
-    this.localUploadsDir = path.resolve(process.cwd(), 'storage', 'resumes');
-    // Ensure storage directory exists if using local storage
-    try {
-      if (!fs.existsSync(this.localUploadsDir)) {
-        fs.mkdirSync(this.localUploadsDir, { recursive: true });
+  constructor(options: ResumeStorageOptions = {}) {
+    this.cloudinaryCloudName = options.cloudinaryCloudName ?? env.CLOUDINARY_CLOUD_NAME;
+    this.cloudinaryApiKey = options.cloudinaryApiKey ?? env.CLOUDINARY_API_KEY;
+    this.cloudinaryApiSecret = options.cloudinaryApiSecret ?? env.CLOUDINARY_API_SECRET;
+    this.jwtSecret = options.jwtSecret ?? env.JWT_SECRET;
+    this.isProduction = options.isProduction ?? env.isProduction;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.localUploadsDir =
+      options.localUploadsDir ?? path.resolve(process.cwd(), 'storage', 'resumes');
+
+    // Ensure storage directory exists if using local storage (development only)
+    if (!this.isProduction && process.env.NODE_ENV !== 'test') {
+      try {
+        if (!fs.existsSync(this.localUploadsDir)) {
+          fs.mkdirSync(this.localUploadsDir, { recursive: true });
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Could not create local resume storage directory');
       }
-    } catch (err) {
-      logger.warn({ err }, 'Could not create local resume storage directory');
     }
   }
 
   public isCloudinaryConfigured(): boolean {
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-    const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
-    const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
+    const cloudName = this.cloudinaryCloudName?.trim();
+    const apiKey = this.cloudinaryApiKey?.trim();
+    const apiSecret = this.cloudinaryApiSecret?.trim();
     return Boolean(cloudName && apiKey && apiSecret);
   }
 
@@ -75,20 +102,26 @@ class ResumeStorageService {
   }
 
   /**
-   * Generates a tamper-proof upload token using HMAC.
+   * Generates a tamper-proof upload token using HMAC with the centrally validated JWT_SECRET.
    */
   public createUploadToken(assetId: string, fileSize: number): string {
-    const secret = process.env.JWT_SECRET || 'recruitment-resume-upload-secret-32-chars';
+    const secret = this.jwtSecret?.trim();
+    if (!secret) {
+      throw new AppError('INTERNAL_ERROR', 'JWT_SECRET is required for resume token signing');
+    }
     const payload = `${assetId}:${fileSize}`;
     const hmac = crypto.createHmac('sha256', secret).update(payload).digest('hex');
     return `${payload}:${hmac}`;
   }
 
   /**
-   * Verifies an upload token.
+   * Verifies an upload token using the centrally validated JWT_SECRET.
    */
   public verifyUploadToken(token: string, assetId: string, fileSize: number): boolean {
-    const secret = process.env.JWT_SECRET || 'recruitment-resume-upload-secret-32-chars';
+    const secret = this.jwtSecret?.trim();
+    if (!secret) {
+      throw new AppError('INTERNAL_ERROR', 'JWT_SECRET is required for resume token verification');
+    }
     const parts = token.split(':');
     if (parts.length !== 3) return false;
     const [tAssetId, tFileSize, hmac] = parts;
@@ -112,12 +145,23 @@ class ResumeStorageService {
     const safeOriginalName = path.basename(originalFilename).replace(/[^\w.-]/g, '_');
     const fileSize = buffer.length;
 
+    // Production strictly requires Cloudinary storage. Never fall back to local disk in production.
+    if (this.isProduction && !this.isCloudinaryConfigured()) {
+      logger.error(
+        'Resume upload refused: Cloudinary storage is required in production but not configured',
+      );
+      throw new AppError(
+        'INTERNAL_ERROR',
+        'Cloud storage is required in production but not configured',
+      );
+    }
+
     // Cloudinary upload if configured
     if (this.isCloudinaryConfigured()) {
       try {
-        const cloudName = process.env.CLOUDINARY_CLOUD_NAME!.trim();
-        const apiKey = process.env.CLOUDINARY_API_KEY!.trim();
-        const apiSecret = process.env.CLOUDINARY_API_SECRET!.trim();
+        const cloudName = this.cloudinaryCloudName!.trim();
+        const apiKey = this.cloudinaryApiKey!.trim();
+        const apiSecret = this.cloudinaryApiSecret!.trim();
         const timestamp = Math.floor(Date.now() / 1000);
         const folder = 'asra_recruitment_resumes';
         const publicId = safeId.replace(/\.pdf$/, '');
@@ -134,10 +178,13 @@ class ResumeStorageService {
         formData.append('public_id', publicId);
         formData.append('signature', signature);
 
-        const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
-          method: 'POST',
-          body: formData,
-        });
+        const response = await this.fetchImpl(
+          `https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`,
+          {
+            method: 'POST',
+            body: formData,
+          },
+        );
 
         if (!response.ok) {
           const errText = await response.text();
@@ -156,12 +203,25 @@ class ResumeStorageService {
         const uploadToken = this.createUploadToken(safeId, fileSize);
         return { ...metadata, uploadToken };
       } catch (err) {
-        logger.error({ err }, 'Error uploading to Cloudinary, falling back to local');
+        if (this.isProduction) {
+          logger.error({ err }, 'Error uploading resume to Cloudinary in production');
+          if (err instanceof AppError) throw err;
+          throw new AppError('INTERNAL_ERROR', 'Cloud resume upload failed');
+        }
+        logger.warn(
+          { err },
+          'Error uploading to Cloudinary in non-production, falling back to local',
+        );
         if (err instanceof AppError) throw err;
       }
     }
 
-    // Local / In-memory storage fallback
+    // Guard: production must never write to local disk
+    if (this.isProduction) {
+      throw new AppError('INTERNAL_ERROR', 'Cloud storage is required in production');
+    }
+
+    // Local / In-memory storage fallback (development and test only)
     if (process.env.NODE_ENV === 'test') {
       const metadata: StoredResumeMetadata = {
         assetId: safeId,
@@ -175,7 +235,7 @@ class ResumeStorageService {
       return { ...metadata, uploadToken };
     }
 
-    // Save to disk
+    // Save to disk (development only)
     const targetPath = path.join(this.localUploadsDir, safeId);
     await fs.promises.writeFile(targetPath, buffer);
 
@@ -210,11 +270,11 @@ class ResumeStorageService {
     // Check Cloudinary if configured
     if (this.isCloudinaryConfigured()) {
       try {
-        const cloudName = process.env.CLOUDINARY_CLOUD_NAME!.trim();
+        const cloudName = this.cloudinaryCloudName!.trim();
         const publicId = `asra_recruitment_resumes/${assetId.replace(/\.pdf$/, '')}`;
         // Direct download URL for raw asset
         const url = `https://res.cloudinary.com/${cloudName}/raw/upload/${publicId}.pdf`;
-        const res = await fetch(url);
+        const res = await this.fetchImpl(url);
         if (res.ok && res.body) {
           const reader = res.body.getReader();
           const stream = new Readable({
@@ -239,7 +299,12 @@ class ResumeStorageService {
       }
     }
 
-    // Check local filesystem
+    // In production, do not check or serve from local disk
+    if (this.isProduction) {
+      throw new AppError('NOT_FOUND', 'Resume file not found');
+    }
+
+    // Check local filesystem (development only)
     const filePath = path.join(this.localUploadsDir, assetId);
     if (fs.existsSync(filePath)) {
       const stat = await fs.promises.stat(filePath);

@@ -37,6 +37,9 @@ const production = {
   EMAIL_TRANSPORT: 'resend',
   EMAIL_API_KEY: 're_x',
   EMAIL_FROM: 'ASRA <no-reply@example.com>',
+  CLOUDINARY_CLOUD_NAME: 'asra-cloud',
+  CLOUDINARY_API_KEY: '123456789012345',
+  CLOUDINARY_API_SECRET: 'secret',
 };
 
 function issues(source: Record<string, string | undefined>): string[] {
