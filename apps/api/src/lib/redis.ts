@@ -35,13 +35,24 @@ redis.on('error', (error) => {
 
 export async function connectRedis(): Promise<void> {
   try {
-    await redis.connect();
+    if (redis.status === 'wait') {
+      await redis.connect();
+    }
+
+    if (redis.status !== 'ready') {
+      await once(redis, 'ready', {
+        signal: AbortSignal.timeout(DEPENDENCY_CHECK_TIMEOUT_MS),
+      });
+    }
+
     logger.info('Redis connected');
   } catch (error) {
-    logger.warn({ err: error }, 'Redis unavailable at startup; will keep retrying');
+    logger.warn(
+      { err: error, status: redis.status },
+      'Redis unavailable at startup; will keep retrying',
+    );
   }
 }
-
 /**
  * Proves Redis is reachable, waiting for the connection first if it is not open yet. With the
  * offline queue disabled a command sent before then is refused at once; on Vercel `server.ts`
