@@ -14,7 +14,7 @@
     "npm": ">=10"
   },
   "scripts": {
-    "build:packages": "npm run build -w @asra/types -w @asra/validation",
+    "build:packages": "npm run build -w @asra/types && npm run build -w @asra/validation",
     "predev": "npm run build:packages",
     "dev": "concurrently -k -n api,web -c blue,green \"npm run dev -w @asra/api\" \"npm run dev -w @asra/web\"",
     "dev:api": "npm run build:packages && npm run dev -w @asra/api",

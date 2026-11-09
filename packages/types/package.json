@@ -21,8 +21,10 @@
     "lint": "eslint .",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@asra/config": "0.1.0"
+  },
   "devDependencies": {
-    "@asra/config": "0.1.0",
     "@types/node": "^24.19.2"
   }
 }
