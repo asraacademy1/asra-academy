@@ -42,10 +42,26 @@ export type AdminAuditAction =
   | 'interview.scheduled'
   | 'interview.rescheduled'
   | 'interview.cancelled'
-  | 'recruitment.email_sent';
+  | 'recruitment.email_sent'
+  | 'academy_quiz.created'
+  | 'academy_quiz.updated'
+  | 'academy_quiz.deleted'
+  | 'academy_quiz.published'
+  | 'academy_quiz.unpublished'
+  | 'academy_quiz.closed'
+  | 'academy_quiz.reopened'
+  | 'academy_quiz.results_published'
+  | 'academy_quiz.questions_copied';
 
 export type AdminAuditEntity =
-  'user' | 'course' | 'live_class' | 'enrollment' | 'certificate' | 'job' | 'job_application';
+  | 'user'
+  | 'course'
+  | 'live_class'
+  | 'enrollment'
+  | 'certificate'
+  | 'job'
+  | 'job_application'
+  | 'academy_quiz';
 
 export async function adminAudit(
   db: DbClient,

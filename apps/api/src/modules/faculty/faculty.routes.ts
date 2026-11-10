@@ -32,6 +32,7 @@ import { requirePermission, requireRole } from '../../middleware/authorize.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import { idParamsSchema } from '../../validators/common.validators.js';
 import { facultyAssessmentController as a } from '../assessments/assessments.controller.js';
+import { assessmentMediaRouter } from '../assessments/media/media.routes.js';
 import { curriculumFacultyRouter } from '../curriculum/curriculum.routes.js';
 import { facultyController as c } from './faculty.controller.js';
 
@@ -75,6 +76,10 @@ r.get('/lessons', content, withQuery(facultyLessonListQuerySchema), c.lessons);
 
 // Curriculum: same routes and service as /admin, limited to assigned courses by the service.
 r.use(curriculumFacultyRouter);
+
+// Question/option images (shared with administration). Uploading needs content.manage_assigned;
+// attaching an image is authorized by the question save (assigned course, DRAFT assessment).
+r.use(assessmentMediaRouter(content));
 
 r.get('/assignments', content, withQuery(facultyAssignmentListQuerySchema), c.assignments);
 r.get('/assignments/:id', content, byId, c.assignment);

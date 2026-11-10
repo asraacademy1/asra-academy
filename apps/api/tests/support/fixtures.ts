@@ -41,6 +41,9 @@ export async function cleanDomainTables(): Promise<void> {
     prisma.assessmentQuestion.deleteMany(),
     prisma.quiz.deleteMany(),
     prisma.examination.deleteMany(),
+    // Academy quizzes and the shared media ledger (options/banners reference media: RESTRICT).
+    prisma.academyQuiz.deleteMany(),
+    prisma.assessmentMedia.deleteMany(),
     prisma.assignmentSubmissionRevision.deleteMany(),
     prisma.assignmentSubmission.deleteMany(),
     prisma.assignment.deleteMany(),

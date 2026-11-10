@@ -1,6 +1,10 @@
+import { PERMISSIONS } from '@asra/types';
 import { Router } from 'express';
 import { authenticate } from '../middleware/authenticate.js';
+import { requirePermission } from '../middleware/authorize.js';
+import { assessmentMediaRouter } from '../modules/assessments/media/media.routes.js';
 import { academicsAdminRouter } from '../modules/academics/academics.routes.js';
+import { academyQuizzesAdminRouter } from '../modules/academy-quizzes/academy-quizzes.routes.js';
 import { adminPortalRouter } from '../modules/admin/admin.routes.js';
 import {
   certificatesAdminRouter,
@@ -66,6 +70,10 @@ adminRouter.use(adminPortalRouter);
 adminRouter.use(certificatesAdminRouter);
 // Recruitment & Careers management (PHASE 16): `recruitment.manage`.
 adminRouter.use(recruitmentAdminRouter);
+// Academy Quizzes administration (standalone quizzes): `academy_quizzes.manage` on every route.
+adminRouter.use(academyQuizzesAdminRouter);
+// Academy Quiz images (shared media service; same handler as /faculty): `academy_quizzes.manage`.
+adminRouter.use(assessmentMediaRouter(requirePermission(PERMISSIONS.ACADEMY_QUIZZES_MANAGE)));
 apiRouter.use('/admin', adminRouter);
 
 /** In-app notifications of the signed-in user, any role (PHASE 11). */

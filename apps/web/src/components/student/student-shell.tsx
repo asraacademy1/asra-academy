@@ -15,6 +15,7 @@ import {
   NotebookPen,
   ShieldAlert,
   TrendingUp,
+  Trophy,
   UserRound,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -46,6 +47,7 @@ export const studentNavigation: NavGroup[] = [
       { label: 'Assignments', href: '/student/assignments', icon: <NotebookPen /> },
       { label: 'Quizzes', href: '/student/quizzes', icon: <FileQuestion /> },
       { label: 'Exams', href: '/student/exams', icon: <ClipboardList /> },
+      { label: 'Academy Quizzes', href: '/student/academy-quizzes', icon: <Trophy /> },
     ],
   },
   {

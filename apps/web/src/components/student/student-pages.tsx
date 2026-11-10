@@ -43,6 +43,7 @@ import { formatDate, formatDateTime, isSafeExternalUrl } from '@/lib/format';
 import { formatAmount, ORDER_STATUS, REFUND_STATE_LABEL } from '@/lib/payments';
 import { courseHref, formatClock, LESSON_TYPE_LABELS, learnHref } from '@/lib/student/learning';
 
+import { AcademyResults } from './academy-quizzes/leaderboard';
 import { AssessmentResults } from './assessment-pages';
 import { CourseProgress, ErrorPanel, ListPager, LoadingPanel } from './student-ui';
 import { errorMessage, useApiResource, useStudentApi, withPage } from './use-student';
@@ -264,6 +265,12 @@ export function ResultsPage() {
           Quizzes and exams
         </h2>
         <AssessmentResults />
+      </section>
+      <section aria-labelledby="academy-results-heading" className="grid gap-3">
+        <h2 id="academy-results-heading" className="type-h2 text-heading">
+          Academy Quizzes
+        </h2>
+        <AcademyResults />
       </section>
       <h2 className="type-h2 text-heading">Assignments</h2>
       <PagedList<StudentResultItem>

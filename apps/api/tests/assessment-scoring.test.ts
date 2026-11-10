@@ -187,10 +187,11 @@ describe('question selection', () => {
     marks: { toString: () => '1' },
     negativeMarks: { toString: () => '0' },
     position: i,
+    imageIds: [] as string[],
     options: [
-      { id: `q${i}a`, text: 'a', isCorrect: true, position: 0 },
-      { id: `q${i}b`, text: 'b', isCorrect: false, position: 1 },
-      { id: `q${i}c`, text: 'c', isCorrect: false, position: 2 },
+      { id: `q${i}a`, text: 'a', isCorrect: true, position: 0, image: null },
+      { id: `q${i}b`, text: 'b', isCorrect: false, position: 1, image: null },
+      { id: `q${i}c`, text: 'c', isCorrect: false, position: 2, image: null },
     ],
   }));
 

@@ -143,17 +143,19 @@ model User {
   liveClassesUpdated   LiveClassSession[]     @relation("LiveClassUpdatedBy")
   notifications        Notification[]
 
-  quizzesCreated      Quiz[]               @relation("QuizCreatedBy")
-  examinationsCreated Examination[]        @relation("ExaminationCreatedBy")
-  assessmentAttempts  AssessmentAttempt[]  @relation("AttemptStudent")
-  answersGraded       AttemptQuestion[]    @relation("AttemptQuestionGradedBy")
-  assessmentAuditLogs AssessmentAuditLog[] @relation("AuditActor")
+  quizzesCreated        Quiz[]               @relation("QuizCreatedBy")
+  examinationsCreated   Examination[]        @relation("ExaminationCreatedBy")
+  academyQuizzesCreated AcademyQuiz[]        @relation("AcademyQuizCreatedBy")
+  assessmentMedia       AssessmentMedia[]    @relation("AssessmentMediaUploadedBy")
+  assessmentAttempts    AssessmentAttempt[]  @relation("AttemptStudent")
+  answersGraded         AttemptQuestion[]    @relation("AttemptQuestionGradedBy")
+  assessmentAuditLogs   AssessmentAuditLog[] @relation("AuditActor")
 
-  orders           Order[]           @relation("OrderStudent")
-  payments         Payment[]         @relation("PaymentStudent")
-  refundsRequested Refund[]          @relation("RefundRequestedBy")
-  paymentAuditLogs PaymentAuditLog[] @relation("PaymentAuditActor")
-  adminAuditLogs   AdminAuditLog[]   @relation("AdminAuditActor")
+  orders             Order[]           @relation("OrderStudent")
+  payments           Payment[]         @relation("PaymentStudent")
+  refundsRequested   Refund[]          @relation("RefundRequestedBy")
+  paymentAuditLogs   PaymentAuditLog[] @relation("PaymentAuditActor")
+  adminAuditLogs     AdminAuditLog[]   @relation("AdminAuditActor")
   certificates       Certificate[]     @relation("CertificateStudent")
   certificatesIssued Certificate[]     @relation("CertificateIssuedBy")
 
@@ -667,11 +669,11 @@ model Enrollment {
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  user       User    @relation("EnrollmentStudent", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  course     Course  @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  enrolledBy User?   @relation("EnrollmentEnrolledBy", fields: [enrolledById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  lastLesson Lesson? @relation(fields: [lastLessonId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  order      Order?  @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user        User         @relation("EnrollmentStudent", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  course      Course       @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  enrolledBy  User?        @relation("EnrollmentEnrolledBy", fields: [enrolledById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  lastLesson  Lesson?      @relation(fields: [lastLessonId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  order       Order?       @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   certificate Certificate?
 
   @@unique([userId, courseId])
@@ -1022,87 +1024,138 @@ model Examination {
   @@map("examinations")
 }
 
-/// A question of exactly one quiz OR one examination (CHECK). Editable only while its
+/// A question of exactly one quiz, examination OR academy quiz (CHECK). Editable only while its
 /// assessment is DRAFT; attempts keep their own snapshot.
 model AssessmentQuestion {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  quizId        String?      @map("quiz_id") @db.Uuid
-  examinationId String?      @map("examination_id") @db.Uuid
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId        String?             @map("quiz_id") @db.Uuid
+  examinationId String?             @map("examination_id") @db.Uuid
+  academyQuizId String?             @map("academy_quiz_id") @db.Uuid
   type          QuestionType
+  /// Used by academy quizzes' difficulty-based selection; null elsewhere.
+  difficulty    QuestionDifficulty?
+  /// Up to 3 `AssessmentMedia` ids shown with the prompt, in order (CHECK cardinality ≤ 3).
+  imageIds      String[]            @default([]) @map("image_ids") @db.Uuid
   /// Plain text (rendered as text, never HTML).
-  prompt        String       @db.Text
+  prompt        String              @db.Text
   /// Shown with the correct answer when answers are revealed.
-  explanation   String?      @db.Text
+  explanation   String?             @db.Text
   /// Marks for a correct answer, 0.25–100 (CHECK).
-  marks         Decimal      @db.Decimal(6, 2)
+  marks         Decimal             @db.Decimal(6, 2)
   /// Deducted for a wrong answer when negative marking is on; 0–marks (CHECK).
-  negativeMarks Decimal      @default(0) @map("negative_marks") @db.Decimal(6, 2)
+  negativeMarks Decimal             @default(0) @map("negative_marks") @db.Decimal(6, 2)
   /// 0-based display order within the assessment.
   position      Int
-  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   quiz        Quiz?                      @relation(fields: [quizId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   examination Examination?               @relation(fields: [examinationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  academyQuiz AcademyQuiz?               @relation(fields: [academyQuizId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   options     AssessmentQuestionOption[]
   attemptRefs AttemptQuestion[]
 
   @@index([quizId, position])
   @@index([examinationId, position])
+  @@index([academyQuizId, position])
+  @@index([imageIds], type: Gin)
   @@map("assessment_questions")
 }
 
 model AssessmentQuestionOption {
   id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   questionId String  @map("question_id") @db.Uuid
+  /// May be empty when the option has an image (text OR image is required — validated by the API).
   text       String  @db.VarChar(1000)
   isCorrect  Boolean @default(false) @map("is_correct")
   position   Int
+  /// Optional image (RESTRICT: media cannot be removed while an option uses it).
+  imageId    String? @map("image_id") @db.Uuid
 
   question AssessmentQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  image    AssessmentMedia?   @relation(fields: [imageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@unique([questionId, position])
+  @@index([imageId])
   @@map("assessment_question_options")
+}
+
+/// An optimized image stored in Cloudinary and used by questions, options, attempt snapshots and
+/// academy quiz banners/prizes. Rows are the ledger that lets unreferenced files be removed
+/// without a scheduler (docs/ASSESSMENTS.md §Media): ACTIVE → DELETING (no longer attachable)
+/// → row deleted once Cloudinary confirms the file is gone.
+model AssessmentMedia {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Cloudinary public id (folder + random UUID; never the original file name).
+  publicId       String      @unique @map("public_id") @db.VarChar(255)
+  uploadedById   String?     @map("uploaded_by_id") @db.Uuid
+  /// "webp" | "jpg" | "png" (CHECK).
+  format         String      @db.VarChar(10)
+  /// 1–102 400 bytes (CHECK; the 100 KB limit is enforced again by the API before upload).
+  bytes          Int
+  width          Int
+  height         Int
+  status         MediaStatus @default(ACTIVE)
+  /// Failed Cloudinary deletions, retried opportunistically.
+  deleteAttempts Int         @default(0) @map("delete_attempts")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  uploadedBy     User?                      @relation("AssessmentMediaUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  options        AssessmentQuestionOption[]
+  academyBanners AcademyQuiz[]              @relation("AcademyQuizBanner")
+
+  @@index([status, createdAt])
+  @@index([uploadedById, createdAt])
+  @@map("assessment_media")
 }
 
 /// One student's attempt at a quiz OR an examination (CHECK). Times are server times. Attempt
 /// numbers are unique per student and assessment, which also makes the attempt limit safe under
 /// concurrent starts. Never deleted while the assessment exists (RESTRICT).
 model AssessmentAttempt {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  quizId           String?           @map("quiz_id") @db.Uuid
-  examinationId    String?           @map("examination_id") @db.Uuid
-  userId           String            @map("user_id") @db.Uuid
-  attemptNumber    Int               @map("attempt_number")
-  status           AttemptStatus     @default(IN_PROGRESS)
-  startedAt        DateTime          @map("started_at") @db.Timestamptz(3)
+  id                        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId                    String?           @map("quiz_id") @db.Uuid
+  examinationId             String?           @map("examination_id") @db.Uuid
+  academyQuizId             String?           @map("academy_quiz_id") @db.Uuid
+  userId                    String            @map("user_id") @db.Uuid
+  attemptNumber             Int               @map("attempt_number")
+  /// Academy quizzes with LINEAR navigation only: the one question the student may answer now.
+  currentPosition           Int?              @map("current_position")
+  /// PER_QUESTION timing only: when the current question locks (≤ deadlineAt).
+  currentQuestionDeadlineAt DateTime?         @map("current_question_deadline_at") @db.Timestamptz(3)
+  status                    AttemptStatus     @default(IN_PROGRESS)
+  startedAt                 DateTime          @map("started_at") @db.Timestamptz(3)
   /// Authoritative deadline computed by the server at start; null = untimed quiz.
-  deadlineAt       DateTime?         @map("deadline_at") @db.Timestamptz(3)
+  deadlineAt                DateTime?         @map("deadline_at") @db.Timestamptz(3)
   /// Server time the answers were frozen: the submit time, or `deadlineAt` for EXPIRED.
-  submittedAt      DateTime?         @map("submitted_at") @db.Timestamptz(3)
+  submittedAt               DateTime?         @map("submitted_at") @db.Timestamptz(3)
   /// When the server processed the finalization (may be after `deadlineAt` for EXPIRED).
-  finalizedAt      DateTime?         @map("finalized_at") @db.Timestamptz(3)
-  evaluationStatus EvaluationStatus? @map("evaluation_status")
-  maxScore         Decimal           @map("max_score") @db.Decimal(8, 2)
+  finalizedAt               DateTime?         @map("finalized_at") @db.Timestamptz(3)
+  evaluationStatus          EvaluationStatus? @map("evaluation_status")
+  maxScore                  Decimal           @map("max_score") @db.Decimal(8, 2)
   /// Σ marks of correct/graded answers (before penalties).
-  rawScore         Decimal?          @map("raw_score") @db.Decimal(8, 2)
-  penalty          Decimal?          @db.Decimal(8, 2)
+  rawScore                  Decimal?          @map("raw_score") @db.Decimal(8, 2)
+  penalty                   Decimal?          @db.Decimal(8, 2)
   /// max(0, rawScore − penalty).
-  score            Decimal?          @db.Decimal(8, 2)
+  score                     Decimal?          @db.Decimal(8, 2)
   /// score ÷ maxScore × 100, rounded half-up to 2 decimals.
-  percent          Decimal?          @db.Decimal(5, 2)
-  passed           Boolean?
-  evaluatedAt      DateTime?         @map("evaluated_at") @db.Timestamptz(3)
-  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  percent                   Decimal?          @db.Decimal(5, 2)
+  passed                    Boolean?
+  evaluatedAt               DateTime?         @map("evaluated_at") @db.Timestamptz(3)
+  createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                 DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   quiz        Quiz?             @relation(fields: [quizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   examination Examination?      @relation(fields: [examinationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  academyQuiz AcademyQuiz?      @relation(fields: [academyQuizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   student     User              @relation("AttemptStudent", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   questions   AttemptQuestion[]
 
   @@unique([quizId, userId, attemptNumber])
   @@unique([examinationId, userId, attemptNumber])
+  @@unique([academyQuizId, userId, attemptNumber])
+  @@index([academyQuizId, status])
   @@index([status, deadlineAt])
   @@index([userId, status])
   @@index([examinationId, status])
@@ -1120,6 +1173,9 @@ model AttemptQuestion {
   position          Int
   type              QuestionType
   snapshot          Json
+  /// Every `AssessmentMedia` id the snapshot shows (question + option images). Indexed so media
+  /// used by a historical attempt can be proven referenced and is never deleted.
+  mediaIds          String[]     @default([]) @map("media_ids") @db.Uuid
   marks             Decimal      @db.Decimal(6, 2)
   negativeMarks     Decimal      @map("negative_marks") @db.Decimal(6, 2)
   /// Options chosen by the student (ids from the snapshot).
@@ -1143,7 +1199,157 @@ model AttemptQuestion {
   @@unique([attemptId, position])
   @@index([questionId])
   @@index([gradedById])
+  @@index([mediaIds], type: Gin)
   @@map("attempt_questions")
+}
+
+// =============================================================================
+// Academy quizzes (Phase 2 of the Academy Quiz feature) — see docs/ASSESSMENTS.md §Academy
+// Standalone quizzes open to every eligible student (verified email + optional class/stream
+// restriction), independent of course enrolment. They reuse AssessmentQuestion,
+// AssessmentAttempt and AttemptQuestion (the third owner kind) and the same attempt engine.
+// Whether a quiz is upcoming / live / ended is derived from startsAt/endsAt and server time.
+// =============================================================================
+
+enum AcademyQuizTimerMode {
+  /// One deadline for the attempt: min(start + durationMinutes, endsAt).
+  OVERALL
+  /// questionTimeSeconds per question, LINEAR navigation; attempt deadline min(start + n·T, endsAt).
+  PER_QUESTION
+
+  @@map("academy_quiz_timer_mode")
+}
+
+enum QuestionNavigation {
+  /// Any order, palette, back and change answers.
+  FREE
+  /// Forward only; the server accepts answers for the current question only.
+  LINEAR
+
+  @@map("question_navigation")
+}
+
+enum QuestionSelection {
+  ALL
+  /// `questionsPerAttempt` drawn at random (every question must carry equal marks).
+  RANDOM
+  /// `easyCount` + `mediumCount` + `hardCount` drawn per difficulty (equal marks per difficulty).
+  BY_DIFFICULTY
+
+  @@map("question_selection")
+}
+
+enum QuestionDifficulty {
+  EASY
+  MEDIUM
+  HARD
+
+  @@map("question_difficulty")
+}
+
+enum ResultRelease {
+  IMMEDIATE
+  /// Visible once server time reaches `resultsAt` (checked on read; no job).
+  SCHEDULED
+  MANUAL
+
+  @@map("result_release")
+}
+
+enum LeaderboardVisibility {
+  HIDDEN
+  SIGNED_IN
+  PUBLIC
+
+  @@map("leaderboard_visibility")
+}
+
+/// Which of a student's attempts is ranked when maxAttempts > 1.
+enum AttemptCounting {
+  BEST
+  FIRST
+
+  @@map("attempt_counting")
+}
+
+/// Second ranking key after score (then attempt id, so ranks are deterministic).
+enum RankingTieBreak {
+  TIME_TAKEN
+  SUBMITTED_AT
+
+  @@map("ranking_tie_break")
+}
+
+enum MediaStatus {
+  ACTIVE
+  DELETING
+
+  @@map("media_status")
+}
+
+model AcademyQuiz {
+  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lower-case kebab-case (CHECK).
+  slug                   String                @unique @db.VarChar(120)
+  title                  String                @db.VarChar(200)
+  summary                String?               @db.VarChar(500)
+  description            String?               @db.Text
+  instructions           String?               @db.Text
+  bannerMediaId          String?               @map("banner_media_id") @db.Uuid
+  /// [{ position, title, description, imageMediaId }] — validated by the API (≤ 10 entries).
+  prizes                 Json                  @default("[]")
+  startsAt               DateTime              @map("starts_at") @db.Timestamptz(3)
+  /// CHECK endsAt > startsAt. No attempt deadline ever exceeds it.
+  endsAt                 DateTime              @map("ends_at") @db.Timestamptz(3)
+  /// Required iff resultRelease = SCHEDULED (CHECK).
+  resultsAt              DateTime?             @map("results_at") @db.Timestamptz(3)
+  timeZone               String                @default("Asia/Kolkata") @map("time_zone") @db.VarChar(64)
+  timerMode              AcademyQuizTimerMode  @default(OVERALL) @map("timer_mode")
+  /// OVERALL only, 1–600 (CHECK).
+  durationMinutes        Int?                  @map("duration_minutes")
+  /// PER_QUESTION only, 10–600 (CHECK).
+  questionTimeSeconds    Int?                  @map("question_time_seconds")
+  navigation             QuestionNavigation    @default(FREE)
+  /// LINEAR only: "Next" requires an answer.
+  requireAnswerToAdvance Boolean               @default(false) @map("require_answer_to_advance")
+  selection              QuestionSelection     @default(ALL)
+  questionsPerAttempt    Int?                  @map("questions_per_attempt")
+  easyCount              Int?                  @map("easy_count")
+  mediumCount            Int?                  @map("medium_count")
+  hardCount              Int?                  @map("hard_count")
+  shuffleQuestions       Boolean               @default(false) @map("shuffle_questions")
+  shuffleOptions         Boolean               @default(false) @map("shuffle_options")
+  negativeMarking        Boolean               @default(false) @map("negative_marking")
+  passPercent            Int                   @default(40) @map("pass_percent")
+  /// 1–5 (CHECK).
+  maxAttempts            Int                   @default(1) @map("max_attempts")
+  /// Empty = no class restriction. Ids are validated against `classes` on save.
+  eligibleClassIds       String[]              @default([]) @map("eligible_class_ids") @db.Uuid
+  eligibleStreamIds      String[]              @default([]) @map("eligible_stream_ids") @db.Uuid
+  resultRelease          ResultRelease         @default(IMMEDIATE) @map("result_release")
+  answerReveal           AnswerReveal          @default(AFTER_CLOSE) @map("answer_reveal")
+  resultsPublishedAt     DateTime?             @map("results_published_at") @db.Timestamptz(3)
+  leaderboardVisibility  LeaderboardVisibility @default(SIGNED_IN) @map("leaderboard_visibility")
+  maskNames              Boolean               @default(false) @map("mask_names")
+  attemptCounting        AttemptCounting       @default(BEST) @map("attempt_counting")
+  tieBreak               RankingTieBreak       @default(TIME_TAKEN) @map("tie_break")
+  status                 AssessmentStatus      @default(DRAFT)
+  publishedAt            DateTime?             @map("published_at") @db.Timestamptz(3)
+  closedAt               DateTime?             @map("closed_at") @db.Timestamptz(3)
+  createdById            String?               @map("created_by_id") @db.Uuid
+  createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  bannerMedia AssessmentMedia?     @relation("AcademyQuizBanner", fields: [bannerMediaId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy   User?                @relation("AcademyQuizCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  questions   AssessmentQuestion[]
+  attempts    AssessmentAttempt[]
+
+  @@index([status, startsAt])
+  @@index([status, endsAt])
+  @@index([createdById])
+  @@index([bannerMediaId])
+  @@map("academy_quizzes")
 }
 
 /// Append-only record of consequential assessment actions (publication, finalization, grading,
@@ -1683,8 +1889,8 @@ model Job {
   createdAt              DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  createdBy    User?                   @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  updatedBy    User?                   @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy    User?                    @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  updatedBy    User?                    @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
   questions    JobApplicationQuestion[]
   applications JobApplication[]
 

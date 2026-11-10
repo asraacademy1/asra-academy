@@ -63,6 +63,10 @@ export const PERMISSIONS = {
   CERTIFICATES_MANAGE: 'certificates.manage',
   /** Manage recruitment, job postings, applications, interviews, and candidate communications. */
   RECRUITMENT_MANAGE: 'recruitment.manage',
+  /** Create and run standalone Academy Quizzes (questions, images, schedule, results). */
+  ACADEMY_QUIZZES_MANAGE: 'academy_quizzes.manage',
+  /** Take published Academy Quizzes (no course enrolment needed; eligibility still applies). */
+  ACADEMY_QUIZZES_PARTICIPATE: 'academy_quizzes.participate',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

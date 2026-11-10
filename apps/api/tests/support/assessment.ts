@@ -32,21 +32,36 @@ export async function newFaculty(baseUrl: string) {
   const { user, facultyProfileId } = await createFaculty();
   const client = new TestClient(baseUrl);
   const session = await login(client, user.email);
-  return { api: apiAs(client, session.accessToken), userId: user.id, facultyProfileId };
+  return {
+    api: apiAs(client, session.accessToken),
+    userId: user.id,
+    facultyProfileId,
+    token: session.accessToken,
+  };
 }
 
 export async function newStudent(baseUrl: string) {
   const client = new TestClient(baseUrl);
   const email = await registerVerifiedStudent(client);
   const session = await login(client, email);
-  return { api: apiAs(client, session.accessToken), userId: session.user.id, email };
+  return {
+    api: apiAs(client, session.accessToken),
+    userId: session.user.id,
+    email,
+    token: session.accessToken,
+  };
 }
 
 /** The same student signed in against another API instance (e.g. after a "restart"). */
 export async function signInAgain(baseUrl: string, student: { email: string; userId: string }) {
   const client = new TestClient(baseUrl);
   const session = await login(client, student.email);
-  return { api: apiAs(client, session.accessToken), userId: student.userId, email: student.email };
+  return {
+    api: apiAs(client, session.accessToken),
+    userId: student.userId,
+    email: student.email,
+    token: session.accessToken,
+  };
 }
 
 export async function buildWorld(baseUrl: string) {

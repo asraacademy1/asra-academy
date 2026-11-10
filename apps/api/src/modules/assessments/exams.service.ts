@@ -34,6 +34,7 @@ import {
   findAttempt,
   lockAttempt,
   lockStudentAssessment,
+  questionImageRefs,
   rethrowAttemptRace,
   selectQuestions,
   sourceQuestionSelect,
@@ -46,7 +47,9 @@ import { notificationProducers } from '../notifications/producers.js';
 import { audit } from './audit.js';
 import {
   listQuestions,
+  mediaUsedBy,
   questionAuthoring,
+  releaseMediaSafely,
   questionTotals,
   type OwnerContext,
 } from './questions.service.js';
@@ -304,7 +307,7 @@ export const facultyExamService = {
 
   /** Deletes a DRAFT exam (drafts never have attempts). */
   async remove(auth: AuthContext, id: string): Promise<void> {
-    await prisma.$transaction(async (tx) => {
+    const removedMedia = await prisma.$transaction(async (tx) => {
       await authorisedExam(auth, id, undefined, tx);
       const current = await lockExam(tx, id);
       if (current.status !== 'DRAFT') {
@@ -313,12 +316,16 @@ export const facultyExamService = {
           'Only a draft exam can be deleted. Close a published exam instead.',
         );
       }
+      const media = await mediaUsedBy(tx, { examinationId: id });
       await tx.examination.delete({ where: { id } });
+      return media;
     });
+    // Images no other question/attempt uses are removed from storage (after commit).
+    await releaseMediaSafely(removedMedia);
   },
 
   addQuestion(auth: AuthContext, id: string, input: QuestionInput): Promise<QuestionDto> {
-    return questionAuthoring.add(ownerResolver(auth, id), input);
+    return questionAuthoring.add(auth, ownerResolver(auth, id), input);
   },
 
   reorderQuestions(auth: AuthContext, id: string, input: QuestionOrderInput) {
@@ -633,11 +640,15 @@ export const studentExamService = {
         });
         const reason = cannotStartReason(exam, now, existing.length, questions.length, false);
         if (reason) throw new AppError('CONFLICT', reason);
-        const chosen = selectQuestions(questions, {
-          shuffleQuestions: exam.shuffleQuestions,
-          shuffleOptions: exam.shuffleOptions,
-          take: null,
-        });
+        const chosen = selectQuestions(
+          questions,
+          {
+            shuffleQuestions: exam.shuffleQuestions,
+            shuffleOptions: exam.shuffleOptions,
+            take: null,
+          },
+          await questionImageRefs(tx, questions),
+        );
         const maxCents = chosen.reduce((sum, q) => sum + toCents(q.marks), 0);
         const created = await tx.assessmentAttempt.create({
           data: {
