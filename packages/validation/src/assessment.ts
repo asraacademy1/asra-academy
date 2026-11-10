@@ -21,6 +21,8 @@ export const QUESTION_TYPES = [
 ] as const;
 export const OBJECTIVE_QUESTION_TYPES = ['SINGLE_CHOICE', 'TRUE_FALSE', 'MULTIPLE_CHOICE'] as const;
 export const ANSWER_REVEALS = ['NEVER', 'AFTER_SUBMISSION', 'AFTER_CLOSE'] as const;
+/** Used by academy quizzes' difficulty-based selection (ignored for course quizzes/exams). */
+export const QUESTION_DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD'] as const;
 
 export const QUIZ_LIMITS = {
   timeLimitMinutes: { min: 1, max: 300 },
@@ -40,6 +42,26 @@ export const QUESTION_LIMITS = {
   optionLength: 1000,
   questionsPerAssessment: 200,
 } as const;
+
+/**
+ * Question/option images (shared by course quizzes, examinations and academy quizzes). The byte
+ * limit is enforced by the browser before upload AND by the API (body limit + DB CHECK).
+ */
+export const MEDIA_LIMITS = {
+  /** 100 KB — strict, server-enforced. */
+  maxBytes: 102_400,
+  /** Longest side accepted by the API (the browser targets `targetDimension`). */
+  maxDimension: 2048,
+  targetDimension: 1600,
+  minDimension: 640,
+  questionImages: 3,
+  optionImages: 1,
+  /** Uploads not yet used by any question, per account. */
+  maxPendingPerUser: 30,
+  formats: ['webp', 'jpg', 'png'] as const,
+  mimeTypes: ['image/webp', 'image/jpeg', 'image/png'] as const,
+} as const;
+export type MediaFormat = (typeof MEDIA_LIMITS.formats)[number];
 
 /** Written answers to SHORT_ANSWER questions. */
 export const TEXT_ANSWER_MAX_LENGTH = 10_000;
@@ -76,26 +98,36 @@ const intIn = (label: string, { min, max }: { min: number; max: number }) =>
 
 // --- Questions ------------------------------------------------------------------------------
 
+/** An uploaded image (`POST …/assessment-media`); the API checks it may be attached. */
+const mediaIdSchema = z.uuid('Upload the image again');
+
 const optionSchema = z
   .object({
     text: z
       .string()
       .trim()
-      .min(1, 'Write the option text')
       .max(
         QUESTION_LIMITS.optionLength,
         `Must be at most ${QUESTION_LIMITS.optionLength} characters`,
-      ),
+      )
+      .default(''),
     isCorrect: z.boolean(),
+    /** At most one image per option. */
+    imageId: mediaIdSchema.nullable().default(null),
   })
-  .strict();
+  .strict()
+  .refine((option) => option.text !== '' || option.imageId !== null, {
+    path: ['text'],
+    message: 'Write the option text or add an image',
+  });
 
 /**
  * One question. Options are required for choice types and forbidden for SHORT_ANSWER:
  *   SINGLE_CHOICE   2–10 options, exactly one correct
- *   TRUE_FALSE      exactly 2 options, exactly one correct
+ *   TRUE_FALSE      exactly 2 options, exactly one correct (text only, no option images)
  *   MULTIPLE_CHOICE 2–10 options, at least one correct
  *   SHORT_ANSWER    no options (manual grading; examinations only — checked by the API)
+ * Any type may show up to 3 images with the prompt; choice options may each carry one image.
  */
 export const questionInputSchema = z
   .object({
@@ -109,9 +141,18 @@ export const questionInputSchema = z
         `Must be at most ${QUESTION_LIMITS.promptLength} characters`,
       ),
     explanation: optionalTextSchema(5000),
+    difficulty: z.enum(QUESTION_DIFFICULTIES).nullable().default(null),
     marks: marksSchema,
     negativeMarks: negativeMarksSchema.default(0),
     options: z.array(optionSchema).max(QUESTION_LIMITS.options.max).default([]),
+    imageIds: z
+      .array(mediaIdSchema)
+      .max(
+        MEDIA_LIMITS.questionImages,
+        `A question can have at most ${MEDIA_LIMITS.questionImages} images`,
+      )
+      .refine((ids) => new Set(ids).size === ids.length, 'Each image may be added only once')
+      .default([]),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -138,10 +179,23 @@ export const questionInputSchema = z
     if (value.type === 'TRUE_FALSE' && value.options.length !== 2) {
       return issue('True/False questions have exactly two options');
     }
+    if (value.type === 'TRUE_FALSE' && value.options.some((option) => option.imageId !== null)) {
+      return issue('True/False options cannot have images');
+    }
     if (value.options.length < QUESTION_LIMITS.options.min) {
       return issue(`Add at least ${QUESTION_LIMITS.options.min} options`);
     }
-    const texts = value.options.map((option) => option.text.toLowerCase());
+    const imageIds = value.options.flatMap((option) => (option.imageId ? [option.imageId] : []));
+    if (
+      new Set([...imageIds, ...value.imageIds]).size !==
+      imageIds.length + value.imageIds.length
+    ) {
+      issue('Each image may be used only once in a question');
+    }
+    // Picture-only options have no text; only written texts must differ.
+    const texts = value.options.flatMap((option) =>
+      option.text === '' ? [] : [option.text.toLowerCase()],
+    );
     if (new Set(texts).size !== texts.length) issue('Options must be different from each other');
     if (value.type === 'MULTIPLE_CHOICE') {
       if (correct < 1) issue('Mark at least one correct option');

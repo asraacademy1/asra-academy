@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   Shapes,
   Split,
+  Trophy,
   UserRoundCheck,
   Users,
 } from 'lucide-react';
@@ -88,7 +89,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const navigation = buildNavigation((permission) => hasPermission(user, permission));
+  const can = (permission: string) => hasPermission(user, permission);
+  const navigation = buildNavigation(can);
+  const pageAllowed = canAccessAdminPath(pathname ?? '/admin', can);
 
   return (
     <AdminLayout
@@ -108,9 +111,91 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </>
       }
     >
-      {children}
+      {pageAllowed ? children : <PageNotAvailable />}
     </AdminLayout>
   );
+}
+
+/**
+ * Shown instead of a page the signed-in account has no permission for (e.g. an Admin opening
+ * `/admin/admins` by URL). The page — and therefore its API request — never mounts; the API would
+ * answer 403 anyway.
+ */
+function PageNotAvailable() {
+  return (
+    <div className="mx-auto grid max-w-md justify-items-center gap-4 rounded-2xl border bg-card p-8 text-center shadow-card">
+      <ShieldAlert className="size-10 text-muted-foreground" aria-hidden />
+      <h1 className="type-h2 text-heading">This page is not available</h1>
+      <p className="type-body text-muted-foreground">
+        Your account does not include access to this area of administration.
+      </p>
+      <Button asChild>
+        <Link href="/admin">Go to the dashboard</Link>
+      </Button>
+    </div>
+  );
+}
+
+interface AdminRouteRule {
+  /** Path prefix (segment-aligned): `/admin/courses` matches `/admin/courses/123`. */
+  prefix: string;
+  /** The user needs at least one of these… */
+  anyOf?: readonly string[];
+  /** …and every one of these. */
+  allOf?: readonly string[];
+}
+
+/**
+ * Permission each admin page requires — the same permission its API endpoints require
+ * (apps/api/src/modules/**\/*.routes.ts). The most specific prefix wins. Paths without a rule
+ * (`/admin`, `/admin/notifications`, unknown paths that 404) need no permission beyond portal
+ * access. A UI convenience only: the API remains the security boundary.
+ */
+export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
+  { prefix: '/admin/analytics', allOf: [PERMISSIONS.ANALYTICS_VIEW] },
+  {
+    prefix: '/admin/analytics/revenue',
+    allOf: [PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.PAYMENTS_VIEW],
+  },
+  { prefix: '/admin/students', allOf: [PERMISSIONS.STUDENTS_MANAGE] },
+  { prefix: '/admin/faculty', allOf: [PERMISSIONS.FACULTY_MANAGE] },
+  { prefix: '/admin/admins', allOf: [PERMISSIONS.ADMINS_MANAGE] },
+  {
+    prefix: '/admin/users',
+    anyOf: [PERMISSIONS.STUDENTS_MANAGE, PERMISSIONS.FACULTY_MANAGE, PERMISSIONS.ADMINS_MANAGE],
+  },
+  { prefix: '/admin/academic-levels', allOf: [PERMISSIONS.ACADEMIC_STRUCTURE_MANAGE] },
+  { prefix: '/admin/classes', allOf: [PERMISSIONS.ACADEMIC_STRUCTURE_MANAGE] },
+  { prefix: '/admin/streams', allOf: [PERMISSIONS.ACADEMIC_STRUCTURE_MANAGE] },
+  { prefix: '/admin/subjects', allOf: [PERMISSIONS.ACADEMIC_STRUCTURE_MANAGE] },
+  { prefix: '/admin/courses', allOf: [PERMISSIONS.COURSES_MANAGE] },
+  { prefix: '/admin/course-categories', allOf: [PERMISSIONS.COURSES_MANAGE] },
+  { prefix: '/admin/live-classes', allOf: [PERMISSIONS.LIVE_CLASSES_MANAGE] },
+  { prefix: '/admin/assessments', allOf: [PERMISSIONS.CONTENT_MANAGE] },
+  { prefix: '/admin/academy-quizzes', allOf: [PERMISSIONS.ACADEMY_QUIZZES_MANAGE] },
+  { prefix: '/admin/certificates', allOf: [PERMISSIONS.CERTIFICATES_VIEW] },
+  { prefix: '/admin/payments', allOf: [PERMISSIONS.PAYMENTS_VIEW] },
+  { prefix: '/admin/enrollments', allOf: [PERMISSIONS.ENROLLMENTS_MANAGE] },
+  { prefix: '/admin/email-deliveries', allOf: [PERMISSIONS.NOTIFICATIONS_VIEW] },
+  { prefix: '/admin/recruitment', allOf: [PERMISSIONS.RECRUITMENT_MANAGE] },
+  { prefix: '/admin/roles', allOf: [PERMISSIONS.ROLES_MANAGE] },
+  { prefix: '/admin/audit-logs', allOf: [PERMISSIONS.AUDIT_LOGS_VIEW] },
+];
+
+const matchesPrefix = (path: string, prefix: string) =>
+  path === prefix || path.startsWith(`${prefix}/`);
+
+/** Whether the admin page at `pathname` may be shown to a user with the `can` permissions. */
+export function canAccessAdminPath(
+  pathname: string,
+  can: (permission: string) => boolean,
+): boolean {
+  const path = pathname.replace(/\/+$/, '') || '/';
+  const rule = ADMIN_ROUTE_RULES.filter((r) => matchesPrefix(path, r.prefix)).sort(
+    (a, b) => b.prefix.length - a.prefix.length,
+  )[0];
+  if (!rule) return true;
+  return (rule.allOf ?? []).every(can) && (!rule.anyOf || rule.anyOf.some(can));
 }
 
 /**
@@ -195,6 +280,11 @@ export function buildNavigation(can: (permission: string) => boolean): NavGroup[
       label: 'Assessments',
       href: '/admin/assessments',
       icon: <ClipboardList />,
+    },
+    can(PERMISSIONS.ACADEMY_QUIZZES_MANAGE) && {
+      label: 'Academy Quizzes',
+      href: '/admin/academy-quizzes',
+      icon: <Trophy />,
     },
     can(PERMISSIONS.CERTIFICATES_VIEW) && {
       label: 'Certificates',

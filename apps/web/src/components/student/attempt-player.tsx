@@ -1,11 +1,6 @@
 'use client';
 
-import type {
-  AnswerSaveResultDto,
-  AttemptQuestionDto,
-  ReviewQuestionDto,
-  StudentAttemptDto,
-} from '@asra/types';
+import type { AttemptQuestionDto, ReviewQuestionDto, StudentAttemptDto } from '@asra/types';
 import { TEXT_ANSWER_MAX_LENGTH } from '@asra/validation';
 import {
   AlertTriangle,
@@ -29,6 +24,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
+import {
+  useAnswerAutosave,
+  type AnswerChange,
+  type LocalAnswer,
+} from '@/components/assessments/use-answer-autosave';
 import { ApiClientError } from '@/lib/api';
 import {
   ATTEMPT_STATUS_LABELS,
@@ -44,6 +44,7 @@ import {
   RESULT_STATE_LABELS,
   toggleOption,
 } from '@/lib/assessments';
+import { OptionImage, QuestionImages, optionLetter } from '@/components/assessments/question-media';
 import { formatDateTime } from '@/lib/format';
 import { learnHref } from '@/lib/student/learning';
 import { cn } from '@/lib/utils';
@@ -63,18 +64,7 @@ import { errorMessage, useApiResource, useStudentApi } from './use-student';
  *     (if that request is lost, the server finalizes the attempt at its deadline anyway).
  */
 
-type SaveState = 'saved' | 'pending' | 'saving' | 'error';
-
-interface LocalAnswer {
-  selectedOptionIds: string[];
-  textAnswer: string | null;
-  sequence: number;
-  state: SaveState;
-}
-
 const home = { label: 'Dashboard', href: '/student/dashboard' };
-const TEXT_DEBOUNCE_MS = 800;
-const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000];
 
 function backHref(attempt: StudentAttemptDto) {
   return attempt.kind === 'QUIZ'
@@ -136,37 +126,13 @@ function RunningAttempt({
   const api = useStudentApi();
   const questions = attempt.questions;
   const [index, setIndex] = React.useState(0);
-  const [answers, setAnswers] = React.useState<Record<string, LocalAnswer>>(() =>
-    Object.fromEntries(
-      questions.map((q) => [
-        q.id,
-        {
-          selectedOptionIds: q.selectedOptionIds,
-          textAnswer: q.textAnswer,
-          sequence: q.answerSequence,
-          state: 'saved' as SaveState,
-        },
-      ]),
-    ),
-  );
   const [skew] = React.useState(() => clockSkewMs(attempt.serverNow, receivedAt));
   const [now, setNow] = React.useState(receivedAt);
   const [online, setOnline] = React.useState(true);
   const [confirming, setConfirming] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [finalNotice, setFinalNotice] = React.useState<string | null>(null);
-
-  const answersRef = React.useRef(answers);
-  const timers = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  const inFlight = React.useRef(new Map<string, Promise<void>>());
-  const retries = React.useRef(new Map<string, number>());
   const submitStarted = React.useRef(false);
-  // Retries call the latest `save` through this ref (set after render).
-  const saveRef = React.useRef<(questionId: string) => Promise<void>>(() => Promise.resolve());
-
-  React.useEffect(() => {
-    answersRef.current = answers;
-  });
 
   // Display clock: one tick per second. The server keeps the authoritative time.
   React.useEffect(() => {
@@ -193,109 +159,23 @@ function RunningAttempt({
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
 
-  React.useEffect(() => {
-    const pending = timers.current;
-    return () => pending.forEach((timer) => clearTimeout(timer));
-  }, []);
-
-  const setState = React.useCallback((questionId: string, sequence: number, state: SaveState) => {
-    setAnswers((current) => {
-      const entry = current[questionId];
-      if (!entry || entry.sequence !== sequence) return current; // a newer change is pending
-      return { ...current, [questionId]: { ...entry, state } };
-    });
-  }, []);
-
-  const handleFinalized = React.useCallback(
-    (message: string) => {
-      setFinalNotice(message);
+  const handleConflict = React.useCallback(
+    (error: ApiClientError) => {
+      setFinalNotice(error.message);
       onStale();
     },
     [onStale],
   );
-
-  const save = React.useCallback(
-    (questionId: string): Promise<void> => {
-      const entry = answersRef.current[questionId];
-      const question = questions.find((q) => q.id === questionId);
-      if (!entry || !question || entry.state === 'saved') return Promise.resolve();
-      const { sequence } = entry;
-      setState(questionId, sequence, 'saving');
-      const body =
-        question.type === 'SHORT_ANSWER'
-          ? { textAnswer: entry.textAnswer ?? '', sequence }
-          : { selectedOptionIds: entry.selectedOptionIds, sequence };
-      const request = api
-        .put<AnswerSaveResultDto>(`/student/attempts/${attempt.id}/answers/${questionId}`, body)
-        .then(() => {
-          retries.current.delete(questionId);
-          setState(questionId, sequence, 'saved');
-        })
-        .catch((error: unknown) => {
-          if (error instanceof ApiClientError && error.status === 409) {
-            handleFinalized(error.message);
-            return;
-          }
-          setState(questionId, sequence, 'error');
-          if (error instanceof ApiClientError && error.status >= 400 && error.status < 500) {
-            toast.error('This answer was not saved', { description: error.message });
-            return;
-          }
-          // Network or server trouble: retry with back-off.
-          const attemptNo = retries.current.get(questionId) ?? 0;
-          retries.current.set(questionId, attemptNo + 1);
-          const delay = RETRY_DELAYS_MS[Math.min(attemptNo, RETRY_DELAYS_MS.length - 1)]!;
-          timers.current.set(
-            questionId,
-            setTimeout(() => void saveRef.current(questionId), delay),
-          );
-        })
-        .finally(() => inFlight.current.delete(questionId));
-      inFlight.current.set(questionId, request);
-      return request;
-    },
-    [api, attempt.id, questions, setState, handleFinalized],
+  const answerPath = React.useCallback(
+    (questionId: string) => `/student/attempts/${attempt.id}/answers/${questionId}`,
+    [attempt.id],
   );
-
-  React.useEffect(() => {
-    saveRef.current = save;
+  const { answers, change, flush, unsaved } = useAnswerAutosave({
+    api,
+    questions,
+    answerPath,
+    onConflict: handleConflict,
   });
-
-  function change(
-    question: AttemptQuestionDto,
-    next: Partial<Pick<LocalAnswer, 'selectedOptionIds' | 'textAnswer'>>,
-  ) {
-    const entry = answersRef.current[question.id]!;
-    const updated: LocalAnswer = {
-      ...entry,
-      ...next,
-      sequence: entry.sequence + 1,
-      state: 'pending',
-    };
-    answersRef.current = { ...answersRef.current, [question.id]: updated };
-    setAnswers(answersRef.current);
-    const existing = timers.current.get(question.id);
-    if (existing) clearTimeout(existing);
-    timers.current.set(
-      question.id,
-      setTimeout(
-        () => void save(question.id),
-        question.type === 'SHORT_ANSWER' ? TEXT_DEBOUNCE_MS : 0,
-      ),
-    );
-  }
-
-  /** Sends every unsaved answer now and waits for the requests in flight. */
-  async function flush() {
-    timers.current.forEach((timer) => clearTimeout(timer));
-    timers.current.clear();
-    await Promise.all(
-      Object.entries(answersRef.current)
-        .filter(([, entry]) => entry.state !== 'saved')
-        .map(([questionId]) => save(questionId)),
-    );
-    await Promise.all(inFlight.current.values());
-  }
 
   const submit = React.useCallback(
     async (automatic: boolean) => {
@@ -338,7 +218,6 @@ function RunningAttempt({
   const unanswered = questions.filter(
     (q) => !isAnswered({ type: q.type, ...answers[q.id]! }),
   ).length;
-  const unsaved = Object.values(answers).filter((a) => a.state !== 'saved').length;
 
   return (
     <>
@@ -426,6 +305,7 @@ function RunningAttempt({
           </div>
           {/* Question text is plain text, never HTML. */}
           <p className="type-body break-words whitespace-pre-wrap">{question.prompt}</p>
+          <QuestionImages key={question.id} images={question.images} priority />
           <AnswerInput
             question={question}
             answer={local}
@@ -496,7 +376,7 @@ function RunningAttempt({
   );
 }
 
-function SaveIndicator({ unsaved, online }: { unsaved: number; online: boolean }) {
+export function SaveIndicator({ unsaved, online }: { unsaved: number; online: boolean }) {
   if (!online) {
     return (
       <span className="flex items-center gap-1.5 type-body-sm text-warning">
@@ -519,16 +399,16 @@ function SaveIndicator({ unsaved, online }: { unsaved: number; online: boolean }
   );
 }
 
-function AnswerInput({
+export function AnswerInput({
   question,
   answer,
   disabled,
   onChange,
 }: {
   question: AttemptQuestionDto;
-  answer: LocalAnswer;
+  answer: Pick<LocalAnswer, 'selectedOptionIds' | 'textAnswer'>;
   disabled: boolean;
-  onChange: (next: Partial<Pick<LocalAnswer, 'selectedOptionIds' | 'textAnswer'>>) => void;
+  onChange: (next: AnswerChange) => void;
 }) {
   if (question.type === 'SHORT_ANSWER') {
     return (
@@ -554,7 +434,7 @@ function AnswerInput({
       <legend className="mb-2 type-label">
         {multiple ? 'Choose every correct answer' : 'Choose one answer'}
       </legend>
-      {question.options.map((option) => {
+      {question.options.map((option, optionIndex) => {
         const checked = answer.selectedOptionIds.includes(option.id);
         return (
           <label
@@ -585,8 +465,12 @@ function AnswerInput({
                 }
               }}
               className="mt-1 size-4 accent-primary"
+              aria-label={option.text ? undefined : `Option ${optionLetter(optionIndex)}`}
             />
-            <span className="break-words">{option.text}</span>
+            <span className="grid min-w-0 gap-2">
+              {option.text ? <span className="break-words">{option.text}</span> : null}
+              <OptionImage image={option.image} index={optionIndex} />
+            </span>
           </label>
         );
       })}
@@ -679,7 +563,7 @@ export function AttemptOutcome({ attempt }: { attempt: StudentAttemptDto }) {
   );
 }
 
-function ScoreFact({
+export function ScoreFact({
   label,
   value,
   tone,
@@ -705,7 +589,13 @@ function ScoreFact({
 }
 
 /** The student's own answers, without the answer key (used until answers may be revealed). */
-function OwnAnswers({ attempt }: { attempt: StudentAttemptDto }) {
+export function OwnAnswers({
+  attempt,
+  note = 'Correct answers are shown only when your faculty allow it.',
+}: {
+  attempt: { questions: AttemptQuestionDto[] };
+  note?: string;
+}) {
   return (
     <section aria-labelledby="answers-heading" className="grid gap-3">
       <h2 id="answers-heading" className="type-h3 text-heading">
@@ -717,20 +607,24 @@ function OwnAnswers({ attempt }: { attempt: StudentAttemptDto }) {
             <span className="type-label text-heading">
               {i + 1}. <span className="whitespace-pre-wrap">{q.prompt}</span>
             </span>
+            <QuestionImages images={q.images} />
             {q.type === 'SHORT_ANSWER' ? (
               <p className="type-body-sm whitespace-pre-wrap">
                 {q.textAnswer || <em className="text-muted-foreground">Not answered</em>}
               </p>
             ) : (
               <ul className="grid gap-1 type-body-sm">
-                {q.options.map((o) => (
-                  <li key={o.id} className="flex items-center gap-2">
+                {q.options.map((o, optionIndex) => (
+                  <li key={o.id} className="flex items-start gap-2">
                     {q.selectedOptionIds.includes(o.id) ? (
                       <CheckCircle2 className="size-4 text-primary" aria-label="Your choice" />
                     ) : (
                       <CircleDashed className="size-4 text-muted-foreground" aria-hidden />
                     )}
-                    {o.text}
+                    <span className="grid gap-1">
+                      {o.text ? <span>{o.text}</span> : null}
+                      <OptionImage image={o.image} index={optionIndex} className="max-w-48" />
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -738,9 +632,7 @@ function OwnAnswers({ attempt }: { attempt: StudentAttemptDto }) {
           </li>
         ))}
       </ol>
-      <p className="type-caption text-muted-foreground">
-        Correct answers are shown only when your faculty allow it.
-      </p>
+      <p className="type-caption text-muted-foreground">{note}</p>
     </section>
   );
 }
@@ -767,6 +659,7 @@ export function ReviewList({
               </span>
               <OutcomeBadge question={q} />
             </div>
+            <QuestionImages images={q.images} />
             {q.type === 'SHORT_ANSWER' ? (
               <div className="grid gap-1">
                 <p className="type-body-sm whitespace-pre-wrap">
@@ -780,11 +673,11 @@ export function ReviewList({
               </div>
             ) : (
               <ul className="grid gap-1 type-body-sm">
-                {q.options.map((o) => (
+                {q.options.map((o, optionIndex) => (
                   <li
                     key={o.id}
                     className={cn(
-                      'flex items-center gap-2',
+                      'flex items-start gap-2',
                       o.isCorrect && 'font-semibold text-success',
                     )}
                   >
@@ -797,10 +690,13 @@ export function ReviewList({
                     ) : (
                       <CircleDashed className="size-4 text-muted-foreground" aria-hidden />
                     )}
-                    <span>
-                      {o.text}
-                      {o.isCorrect ? ' (correct answer)' : ''}
-                      {o.selected ? ' — selected' : ''}
+                    <span className="grid gap-1">
+                      <span>
+                        {o.text || `Option ${optionLetter(optionIndex)}`}
+                        {o.isCorrect ? ' (correct answer)' : ''}
+                        {o.selected ? ' — selected' : ''}
+                      </span>
+                      <OptionImage image={o.image} index={optionIndex} className="max-w-48" />
                     </span>
                   </li>
                 ))}

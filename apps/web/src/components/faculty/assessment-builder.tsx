@@ -4,12 +4,15 @@ import type {
   AssessmentStatus,
   AttemptCounts,
   FacultyAttemptItem,
+  MediaDto,
   Paginated,
+  QuestionDifficulty,
   QuestionDto,
   QuestionType,
 } from '@asra/types';
 import {
   ATTEMPT_FILTERS,
+  MEDIA_LIMITS,
   QUESTION_LIMITS,
   questionInputSchema,
   type AssessmentTransition,
@@ -29,6 +32,8 @@ import Link from 'next/link';
 import * as React from 'react';
 
 import { ConfirmDialog, SelectField } from '@/components/admin/admin-ui';
+import { ImageSlots, useImageUploader } from '@/components/assessments/image-slots';
+import { OptionImage, QuestionImages, optionLetter } from '@/components/assessments/question-media';
 import { EmptyState } from '@/components/public/empty-state';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -191,24 +196,75 @@ export function TransitionButtons<T>({
 // --- Questions ------------------------------------------------------------------------------
 
 interface DraftOption {
+  /** Client-only identity: survives removing/reordering other options (never sent). */
+  key: string;
   text: string;
   isCorrect: boolean;
+  image: MediaDto | null;
 }
 
-const TRUE_FALSE_OPTIONS: DraftOption[] = [
-  { text: 'True', isCorrect: true },
-  { text: 'False', isCorrect: false },
+let draftKeySeq = 0;
+/** A new client-only option key. */
+export const draftKey = () => `opt-${(draftKeySeq += 1)}`;
+
+const TRUE_FALSE_OPTIONS: Omit<DraftOption, 'key'>[] = [
+  { text: 'True', isCorrect: true, image: null },
+  { text: 'False', isCorrect: false, image: null },
 ];
 
 function blankOptions(type: QuestionType): DraftOption[] {
   if (type === 'SHORT_ANSWER') return [];
-  if (type === 'TRUE_FALSE') return TRUE_FALSE_OPTIONS.map((o) => ({ ...o }));
-  return [
-    { text: '', isCorrect: true },
-    { text: '', isCorrect: false },
-    { text: '', isCorrect: false },
-    { text: '', isCorrect: false },
-  ];
+  if (type === 'TRUE_FALSE') return TRUE_FALSE_OPTIONS.map((o) => ({ ...o, key: draftKey() }));
+  return [true, false, false, false].map((isCorrect) => ({
+    key: draftKey(),
+    text: '',
+    isCorrect,
+    image: null,
+  }));
+}
+
+/**
+ * Where the shared editor sends edits. Faculty (course quizzes & exams) is the default; the
+ * Academy Quiz admin pages pass their own paths — the editor itself is the same component.
+ */
+export interface QuestionEndpoints {
+  question: (questionId: string) => string;
+  upload: string;
+}
+
+export const FACULTY_QUESTION_ENDPOINTS: QuestionEndpoints = {
+  question: (questionId) => `/faculty/questions/${questionId}`,
+  upload: '/faculty/assessment-media',
+};
+
+/** The request body of a draft (the API re-validates and re-checks every image). */
+export function draftToInput(draft: {
+  type: QuestionType;
+  prompt: string;
+  explanation: string;
+  marks: number | undefined;
+  negativeMarks: number;
+  images: MediaDto[];
+  options: Omit<DraftOption, 'key'>[];
+  difficulty?: QuestionDifficulty | null;
+}) {
+  const choice = draft.type !== 'SHORT_ANSWER';
+  return {
+    type: draft.type,
+    difficulty: draft.difficulty ?? null,
+    prompt: draft.prompt,
+    explanation: draft.explanation,
+    marks: draft.marks,
+    negativeMarks: draft.negativeMarks,
+    imageIds: draft.images.map((image) => image.id),
+    options: choice
+      ? draft.options.map((o) => ({
+          text: o.text,
+          isCorrect: o.isCorrect,
+          imageId: draft.type === 'TRUE_FALSE' ? null : (o.image?.id ?? null),
+        }))
+      : [],
+  };
 }
 
 export function QuestionEditor({
@@ -218,6 +274,8 @@ export function QuestionEditor({
   addPath,
   orderPath,
   onChanged,
+  endpoints = FACULTY_QUESTION_ENDPOINTS,
+  showDifficulty = false,
 }: {
   kind: 'QUIZ' | 'EXAM';
   questions: QuestionDto[];
@@ -225,6 +283,9 @@ export function QuestionEditor({
   addPath: string;
   orderPath: string;
   onChanged: () => void;
+  endpoints?: QuestionEndpoints;
+  /** Academy quizzes: each question carries a difficulty (selection by difficulty). */
+  showDifficulty?: boolean;
 }) {
   const api = useFacultyApi();
   const [editing, setEditing] = React.useState<QuestionDto | 'new' | null>(null);
@@ -297,6 +358,9 @@ export function QuestionEditor({
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="type-label text-heading">Q{index + 1}</span>
                     <Badge variant="outline">{QUESTION_TYPE_LABELS[question.type]}</Badge>
+                    {showDifficulty && question.difficulty ? (
+                      <Badge variant="outline">{question.difficulty.toLowerCase()}</Badge>
+                    ) : null}
                     <Badge variant="secondary">
                       {formatMarksValue(question.marks)} marks
                       {question.negativeMarks > 0
@@ -307,6 +371,11 @@ export function QuestionEditor({
                   <span className="type-body break-words whitespace-pre-wrap">
                     {question.prompt}
                   </span>
+                  {question.images.length > 0 ? (
+                    <span className="max-w-xl">
+                      <QuestionImages images={question.images} />
+                    </span>
+                  ) : null}
                 </span>
                 {editable ? (
                   <span className="flex gap-1">
@@ -349,15 +418,24 @@ export function QuestionEditor({
               </div>
               {question.options.length > 0 ? (
                 <ul className="grid gap-1 type-body-sm">
-                  {question.options.map((option) => (
-                    <li key={option.id} className="flex items-center gap-2">
+                  {question.options.map((option, optionIndex) => (
+                    <li key={option.id} className="flex items-start gap-2">
                       {option.isCorrect ? (
                         <CheckCircle2 className="size-4 text-success" aria-label="Correct" />
                       ) : (
                         <span className="size-4" aria-hidden />
                       )}
-                      <span className={option.isCorrect ? 'font-semibold' : undefined}>
-                        {option.text}
+                      <span className="grid gap-1">
+                        {option.text ? (
+                          <span className={option.isCorrect ? 'font-semibold' : undefined}>
+                            {option.text}
+                          </span>
+                        ) : null}
+                        <OptionImage
+                          image={option.image}
+                          index={optionIndex}
+                          className="max-w-40"
+                        />
                       </span>
                     </li>
                   ))}
@@ -381,6 +459,8 @@ export function QuestionEditor({
           kind={kind}
           question={editing === 'new' ? null : editing}
           addPath={addPath}
+          endpoints={endpoints}
+          showDifficulty={showDifficulty}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -391,6 +471,7 @@ export function QuestionEditor({
       {deleting ? (
         <DeleteQuestion
           question={deleting}
+          path={endpoints.question(deleting.id)}
           onDone={() => {
             setDeleting(null);
             onChanged();
@@ -406,11 +487,12 @@ export function QuestionEditor({
 }
 
 function DeleteQuestion({
-  question,
+  path,
   onDone,
   onCancel,
 }: {
   question: QuestionDto;
+  path: string;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -426,7 +508,7 @@ function DeleteQuestion({
       destructive
       onConfirm={async () => {
         try {
-          await api.del(`/faculty/questions/${question.id}`);
+          await api.del(path);
           toast.success('Question deleted');
           onDone();
         } catch (error) {
@@ -442,29 +524,51 @@ function QuestionDialog({
   kind,
   question,
   addPath,
+  endpoints,
+  showDifficulty,
   onClose,
   onSaved,
 }: {
   kind: 'QUIZ' | 'EXAM';
   question: QuestionDto | null;
   addPath: string;
+  endpoints: QuestionEndpoints;
+  showDifficulty: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const api = useFacultyApi();
+  const upload = useImageUploader(endpoints.upload);
   const [type, setType] = React.useState<QuestionType>(question?.type ?? 'SINGLE_CHOICE');
   const [prompt, setPrompt] = React.useState(question?.prompt ?? '');
   const [explanation, setExplanation] = React.useState(question?.explanation ?? '');
   const [marks, setMarks] = React.useState(question ? String(question.marks) : '1');
   const [negative, setNegative] = React.useState(question ? String(question.negativeMarks) : '0');
+  const [images, setImages] = React.useState<MediaDto[]>(question?.images ?? []);
+  const [difficulty, setDifficulty] = React.useState<QuestionDifficulty | ''>(
+    question?.difficulty ?? '',
+  );
   const [options, setOptions] = React.useState<DraftOption[]>(
     question
-      ? question.options.map(({ text, isCorrect }) => ({ text, isCorrect }))
+      ? question.options.map(({ text, isCorrect, image }) => ({
+          key: draftKey(),
+          text,
+          isCorrect,
+          image,
+        }))
       : blankOptions('SINGLE_CHOICE'),
   );
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [formError, setFormError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
+  // Uploads in flight (question images + each option): saving waits for them.
+  const [uploading, setUploading] = React.useState<Record<string, boolean>>({});
+  const busyUploading = Object.values(uploading).some(Boolean);
+  const trackBusy = React.useCallback(
+    (key: string) => (busy: boolean) =>
+      setUploading((current) => (current[key] === busy ? current : { ...current, [key]: busy })),
+    [],
+  );
 
   const types: QuestionType[] =
     kind === 'QUIZ'
@@ -503,21 +607,26 @@ function QuestionDialog({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (pending) return;
-    const parsed = validateForm(questionInputSchema, {
-      type,
-      prompt,
-      explanation,
-      marks: marks.trim() === '' ? undefined : Number(marks),
-      negativeMarks: negative.trim() === '' ? 0 : Number(negative),
-      options: choice ? options : [],
-    });
+    if (pending || busyUploading) return;
+    const parsed = validateForm(
+      questionInputSchema,
+      draftToInput({
+        type,
+        prompt,
+        explanation,
+        marks: marks.trim() === '' ? undefined : Number(marks),
+        negativeMarks: negative.trim() === '' ? 0 : Number(negative),
+        images,
+        options,
+        difficulty: showDifficulty && difficulty !== '' ? difficulty : null,
+      }),
+    );
     setFormError(null);
     if (parsed.errors) return setErrors(parsed.errors);
     setErrors({});
     setPending(true);
     try {
-      if (question) await api.patch(`/faculty/questions/${question.id}`, parsed.data);
+      if (question) await api.patch(endpoints.question(question.id), parsed.data);
       else await api.post(addPath, parsed.data);
       toast.success(question ? 'Question saved' : 'Question added');
       onSaved();
@@ -536,7 +645,8 @@ function QuestionDialog({
         <DialogHeader>
           <DialogTitle>{question ? 'Edit question' : 'Add question'}</DialogTitle>
           <DialogDescription>
-            Plain text only. Scoring is done by the server from the answer key you set here.
+            Plain text, with optional images. Scoring is done by the server from the answer key you
+            set here.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} noValidate className="grid gap-4">
@@ -558,9 +668,52 @@ function QuestionDialog({
                 : undefined
             }
           />
+          {showDifficulty ? (
+            <SelectField
+              id="question-difficulty"
+              label="Difficulty"
+              value={difficulty || 'NONE'}
+              onValueChange={(value) =>
+                setDifficulty(value === 'NONE' ? '' : (value as QuestionDifficulty))
+              }
+              options={[
+                { value: 'NONE', label: 'Not rated' },
+                { value: 'EASY', label: 'Easy' },
+                { value: 'MEDIUM', label: 'Medium' },
+                { value: 'HARD', label: 'Hard' },
+              ]}
+              error={errors.difficulty}
+              hint="Selection by difficulty draws only rated questions."
+            />
+          ) : null}
           <Field id="question-prompt" label="Question" error={errors.prompt}>
             <Textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
           </Field>
+          <div className="grid gap-1">
+            <span className="type-label">
+              Question images{' '}
+              <span className="font-normal text-muted-foreground">
+                (optional, up to {MEDIA_LIMITS.questionImages})
+              </span>
+            </span>
+            <ImageSlots
+              label="Question image"
+              images={images}
+              max={MEDIA_LIMITS.questionImages}
+              onChange={setImages}
+              upload={upload}
+              onBusyChange={trackBusy('question')}
+              disabled={pending}
+            />
+            {errors.imageIds ? (
+              <p className="type-body-sm text-destructive">{errors.imageIds}</p>
+            ) : (
+              <p className="type-caption text-muted-foreground">
+                Pictures are optimized in your browser to at most {MEDIA_LIMITS.maxBytes / 1024} KB
+                before upload.
+              </p>
+            )}
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
               id="question-marks"
@@ -604,36 +757,64 @@ function QuestionDialog({
                 <p className="type-body-sm text-destructive">{errors.options}</p>
               ) : null}
               {options.map((option, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <input
-                    type={multiple ? 'checkbox' : 'radio'}
-                    name="correct-option"
-                    aria-label={`Option ${index + 1} is correct`}
-                    checked={option.isCorrect}
-                    onChange={() => markCorrect(index)}
-                    className="size-4 accent-primary"
-                  />
-                  <Input
-                    aria-label={`Option ${index + 1}`}
-                    value={option.text}
-                    maxLength={QUESTION_LIMITS.optionLength}
-                    readOnly={type === 'TRUE_FALSE'}
-                    onChange={(e) =>
-                      setOptions(
-                        options.map((o, i) => (i === index ? { ...o, text: e.target.value } : o)),
-                      )
-                    }
-                  />
-                  {type !== 'TRUE_FALSE' && options.length > QUESTION_LIMITS.options.min ? (
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`Remove option ${index + 1}`}
-                      onClick={() => setOptions(options.filter((_, i) => i !== index))}
-                    >
-                      <Trash2 aria-hidden />
-                    </Button>
+                <div key={option.key} className="grid gap-2 rounded-lg border p-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={multiple ? 'checkbox' : 'radio'}
+                      name="correct-option"
+                      aria-label={`Option ${index + 1} is correct`}
+                      checked={option.isCorrect}
+                      onChange={() => markCorrect(index)}
+                      className="size-4 accent-primary"
+                    />
+                    <Input
+                      aria-label={`Option ${index + 1}`}
+                      value={option.text}
+                      placeholder={
+                        type === 'TRUE_FALSE' ? undefined : 'Option text (or add an image)'
+                      }
+                      maxLength={QUESTION_LIMITS.optionLength}
+                      readOnly={type === 'TRUE_FALSE'}
+                      onChange={(e) =>
+                        setOptions(
+                          options.map((o, i) => (i === index ? { ...o, text: e.target.value } : o)),
+                        )
+                      }
+                    />
+                    {type !== 'TRUE_FALSE' && options.length > QUESTION_LIMITS.options.min ? (
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label={`Remove option ${index + 1}`}
+                        disabled={Boolean(uploading[option.key])}
+                        onClick={() => setOptions(options.filter((_, i) => i !== index))}
+                      >
+                        <Trash2 aria-hidden />
+                      </Button>
+                    ) : null}
+                  </div>
+                  {type !== 'TRUE_FALSE' ? (
+                    <div className="pl-6">
+                      <ImageSlots
+                        compact
+                        label={`Image for option ${optionLetter(index)}`}
+                        images={option.image ? [option.image] : []}
+                        max={MEDIA_LIMITS.optionImages}
+                        onChange={(next) =>
+                          // Matched by key: a late upload lands on ITS option (or nowhere if
+                          // that option was removed meanwhile), never on whatever is at its index.
+                          setOptions((current) =>
+                            current.map((o) =>
+                              o.key === option.key ? { ...o, image: next[0] ?? null } : o,
+                            ),
+                          )
+                        }
+                        upload={upload}
+                        onBusyChange={trackBusy(option.key)}
+                        disabled={pending}
+                      />
+                    </div>
                   ) : null}
                 </div>
               ))}
@@ -642,7 +823,12 @@ function QuestionDialog({
                   type="button"
                   variant="ghost"
                   className="w-fit"
-                  onClick={() => setOptions([...options, { text: '', isCorrect: false }])}
+                  onClick={() =>
+                    setOptions([
+                      ...options,
+                      { key: draftKey(), text: '', isCorrect: false, image: null },
+                    ])
+                  }
                 >
                   <Plus aria-hidden /> Add option
                 </Button>
@@ -671,7 +857,13 @@ function QuestionDialog({
             <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
               Cancel
             </Button>
-            <Button type="submit" loading={pending} loadingText="Saving…">
+            <Button
+              type="submit"
+              loading={pending}
+              loadingText="Saving…"
+              disabled={busyUploading}
+              title={busyUploading ? 'Wait for the image upload to finish' : undefined}
+            >
               {question ? 'Save question' : 'Add question'}
             </Button>
           </DialogFooter>
@@ -705,19 +897,23 @@ function QuestionPreview({
               <span className="type-label">
                 {i + 1}. <span className="whitespace-pre-wrap">{q.prompt}</span>
               </span>
+              <QuestionImages images={q.images} />
               {q.type === 'SHORT_ANSWER' ? (
                 <Textarea rows={2} disabled aria-label="Written answer (preview)" />
               ) : (
                 <ul className="grid gap-1">
-                  {q.options.map((o) => (
-                    <li key={o.id} className="flex items-center gap-2 type-body-sm">
+                  {q.options.map((o, optionIndex) => (
+                    <li key={o.id} className="flex items-start gap-2 type-body-sm">
                       <input
                         type={q.type === 'MULTIPLE_CHOICE' ? 'checkbox' : 'radio'}
                         disabled
-                        aria-label={o.text}
-                        className="size-4"
+                        aria-label={o.text || `Option ${optionLetter(optionIndex)}`}
+                        className="mt-1 size-4"
                       />
-                      {o.text}
+                      <span className="grid gap-1">
+                        {o.text ? <span>{o.text}</span> : null}
+                        <OptionImage image={o.image} index={optionIndex} className="max-w-48" />
+                      </span>
                     </li>
                   ))}
                 </ul>

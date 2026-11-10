@@ -35,6 +35,7 @@ import {
   findAttempt,
   lockAttempt,
   lockStudentAssessment,
+  questionImageRefs,
   rethrowAttemptRace,
   selectQuestions,
   sourceQuestionSelect,
@@ -317,7 +318,7 @@ export const facultyQuizService = {
   },
 
   addQuestion(auth: AuthContext, lessonId: string, input: QuestionInput): Promise<QuestionDto> {
-    return questionAuthoring.add(ownerResolver(auth, lessonId), input);
+    return questionAuthoring.add(auth, ownerResolver(auth, lessonId), input);
   },
 
   reorderQuestions(auth: AuthContext, lessonId: string, input: QuestionOrderInput) {
@@ -587,11 +588,15 @@ export const studentQuizService = {
         });
         if (questions.length === 0)
           throw new AppError('CONFLICT', 'This quiz has no questions yet.');
-        const chosen = selectQuestions(questions, {
-          shuffleQuestions: quiz.shuffleQuestions,
-          shuffleOptions: quiz.shuffleOptions,
-          take: quiz.questionsPerAttempt,
-        });
+        const chosen = selectQuestions(
+          questions,
+          {
+            shuffleQuestions: quiz.shuffleQuestions,
+            shuffleOptions: quiz.shuffleOptions,
+            take: quiz.questionsPerAttempt,
+          },
+          await questionImageRefs(tx, questions),
+        );
         const maxCents = chosen.reduce((sum, q) => sum + toCents(q.marks), 0);
         const created = await tx.assessmentAttempt.create({
           data: {

@@ -19,7 +19,11 @@ import type { UserRole } from '@asra/types';
 import { createApp } from '../src/app.js';
 import { disconnectPrisma } from '../src/database/prisma.js';
 import { disconnectRedis } from '../src/lib/redis.js';
+import { PERMISSIONS } from '@asra/types';
+import { requirePermission } from '../src/middleware/authorize.js';
 import { academicsAdminRouter } from '../src/modules/academics/academics.routes.js';
+import { academyQuizzesAdminRouter } from '../src/modules/academy-quizzes/academy-quizzes.routes.js';
+import { assessmentMediaRouter } from '../src/modules/assessments/media/media.routes.js';
 import { adminPortalRouter } from '../src/modules/admin/admin.routes.js';
 import { certificatesAdminRouter } from '../src/modules/certificates/certificates.routes.js';
 import { coursesAdminRouter } from '../src/modules/courses/courses.routes.js';
@@ -81,6 +85,9 @@ const ADMIN_ROUTES = [
   liveClassesAdminRouter,
   adminPortalRouter,
   certificatesAdminRouter,
+  // Academy Quizzes (academy_quizzes.manage) and their image uploads.
+  academyQuizzesAdminRouter,
+  assessmentMediaRouter(requirePermission(PERMISSIONS.ACADEMY_QUIZZES_MANAGE)),
 ].flatMap((router) => routesOf(router, '/admin'));
 const STUDENT_ROUTES = routesOf(studentRouter, '/student');
 const FACULTY_ROUTES = routesOf(facultyRouter, '/faculty');

@@ -16,7 +16,9 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { clock } from '../../lib/clock.js';
 import { logger } from '../../lib/logger.js';
 import { AppError } from '../../utils/app-error.js';
-import { audit } from './audit.js';
+import type { MediaFormat } from '@asra/validation';
+import { ACADEMY_FINALIZE_LIMITS } from '../../config/constants.js';
+import { loadMediaRefs, mediaRefSelect, toMediaDto, type MediaRef } from './media/media.service.js';
 import { fromCents, isAnswered, scoreAttempt, toCents, type ScoringQuestion } from './scoring.js';
 
 /**
@@ -35,26 +37,36 @@ import { fromCents, isAnswered, scoreAttempt, toCents, type ScoringQuestion } fr
 
 // --- Snapshot -------------------------------------------------------------------------------
 
+/** An image frozen into a snapshot: everything needed to show it, whatever happens later. */
+export type SnapshotImage = MediaRef;
+
 export interface SnapshotOption {
   id: string;
   text: string;
   isCorrect: boolean;
+  /** Absent in snapshots taken before question images existed. */
+  image?: SnapshotImage | null;
 }
 
 export interface QuestionSnapshot {
   prompt: string;
   explanation: string | null;
   options: SnapshotOption[];
+  images: SnapshotImage[];
 }
 
+/** Historical snapshots (no `images`, no option `image`) read as "no images". */
 export function readSnapshot(value: Prisma.JsonValue): QuestionSnapshot {
   const raw = (value ?? {}) as Partial<QuestionSnapshot>;
   return {
     prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
     explanation: typeof raw.explanation === 'string' ? raw.explanation : null,
     options: Array.isArray(raw.options) ? raw.options : [],
+    images: Array.isArray(raw.images) ? raw.images : [],
   };
 }
+
+const optionImageDto = (option: SnapshotOption) => (option.image ? toMediaDto(option.image) : null);
 
 /** Fisher–Yates with a CSPRNG (students cannot predict the order from earlier attempts). */
 export function shuffled<T>(items: readonly T[]): T[] {
@@ -74,9 +86,17 @@ export const sourceQuestionSelect = {
   marks: true,
   negativeMarks: true,
   position: true,
+  difficulty: true,
+  imageIds: true,
   options: {
     orderBy: { position: 'asc' },
-    select: { id: true, text: true, isCorrect: true, position: true },
+    select: {
+      id: true,
+      text: true,
+      isCorrect: true,
+      position: true,
+      image: { select: mediaRefSelect },
+    },
   },
 } satisfies Prisma.AssessmentQuestionSelect;
 
@@ -84,13 +104,40 @@ export type SourceQuestion = Prisma.AssessmentQuestionGetPayload<{
   select: typeof sourceQuestionSelect;
 }>;
 
+const asRef = (row: {
+  id: string;
+  publicId: string;
+  format: string;
+  width: number;
+  height: number;
+}) => ({ ...row, format: row.format as MediaFormat }) satisfies MediaRef;
+
+/** Question images (an id array, no FK) are loaded in one query for a set of questions. */
+export function questionImageRefs(db: DbClient, questions: readonly SourceQuestion[]) {
+  return loadMediaRefs(
+    db,
+    questions.flatMap((question) => question.imageIds),
+  );
+}
+
+/** A question's images in order (ids whose media no longer exists are skipped). */
+export function imagesOf(question: Pick<SourceQuestion, 'imageIds'>, media: Map<string, MediaRef>) {
+  return question.imageIds.flatMap((id) => {
+    const ref = media.get(id);
+    return ref ? [ref] : [];
+  });
+}
+
 /**
  * Picks and orders the questions of a new attempt. With `take`, a uniformly random subset is drawn
  * (kept in authoring order unless questions are shuffled). True/False options are never shuffled.
+ * Images are frozen into the snapshot and listed in `mediaIds`, which keeps them referenced (and
+ * therefore never deleted) for as long as the attempt exists.
  */
 export function selectQuestions(
   questions: readonly SourceQuestion[],
   rules: { shuffleQuestions: boolean; shuffleOptions: boolean; take: number | null },
+  media: Map<string, MediaRef> = new Map(),
 ) {
   let chosen = [...questions].sort((a, b) => a.position - b.position);
   if (rules.take !== null && rules.take < chosen.length) {
@@ -103,17 +150,28 @@ export function selectQuestions(
   }
   if (rules.shuffleQuestions) chosen = shuffled(chosen);
   return chosen.map((question, position) => {
-    const options = question.options.map(({ id, text, isCorrect }) => ({ id, text, isCorrect }));
+    const options: SnapshotOption[] = question.options.map(({ id, text, isCorrect, image }) => ({
+      id,
+      text,
+      isCorrect,
+      image: image ? asRef(image) : null,
+    }));
+    const images = imagesOf(question, media);
     const snapshot: QuestionSnapshot = {
       prompt: question.prompt,
       explanation: question.explanation,
       options: rules.shuffleOptions && question.type !== 'TRUE_FALSE' ? shuffled(options) : options,
+      images,
     };
     return {
       questionId: question.id,
       position,
       type: question.type,
       snapshot: snapshot as unknown as Prisma.InputJsonObject,
+      mediaIds: [
+        ...images.map((image) => image.id),
+        ...options.flatMap((option) => (option.image ? [option.image.id] : [])),
+      ],
       marks: question.marks,
       negativeMarks: question.negativeMarks,
     };
@@ -144,8 +202,11 @@ export const attemptSelect = {
   id: true,
   quizId: true,
   examinationId: true,
+  academyQuizId: true,
   userId: true,
   attemptNumber: true,
+  currentPosition: true,
+  currentQuestionDeadlineAt: true,
   status: true,
   startedAt: true,
   deadlineAt: true,
@@ -208,6 +269,25 @@ export const attemptSelect = {
       course: { select: { id: true, title: true } },
     },
   },
+  academyQuiz: {
+    select: {
+      id: true,
+      slug: true,
+      title: true,
+      status: true,
+      negativeMarking: true,
+      passPercent: true,
+      endsAt: true,
+      timerMode: true,
+      questionTimeSeconds: true,
+      navigation: true,
+      requireAnswerToAdvance: true,
+      resultRelease: true,
+      resultsAt: true,
+      resultsPublishedAt: true,
+      answerReveal: true,
+    },
+  },
 } satisfies Prisma.AssessmentAttemptSelect;
 
 export type AttemptRow = Prisma.AssessmentAttemptGetPayload<{ select: typeof attemptSelect }>;
@@ -237,7 +317,9 @@ export function assessmentOf(row: AttemptSummaryRow) {
       closed: (_now: Date) => row.quiz!.status === 'CLOSED',
     };
   }
-  const exam = row.examination!;
+  // Course-shaped view only: academy attempts are served by their own module (never here).
+  if (!row.examination) throw new AppError('NOT_FOUND', 'Attempt not found');
+  const exam = row.examination;
   return {
     kind: 'EXAM' as const,
     id: exam.id,
@@ -295,40 +377,152 @@ const decimal = (cents: number) => new Prisma.Decimal(fromCents(cents).toFixed(2
  * when nothing awaits manual grading, the attempt score. Idempotent: running it twice on the same
  * answers writes the same values.
  */
-async function writeEvaluation(tx: DbClient, row: AttemptRow, now: Date) {
-  const assessment = assessmentOf(row);
-  const evaluation = scoreAttempt(scoringInput(row), {
-    negativeMarking: assessment.negativeMarking,
-    passPercent: assessment.passPercent,
+/**
+ * The scoring rules of an attempt's assessment — all three kinds. Finalization (submit, expiry,
+ * closure) needs only these, so it works for academy quizzes without the course-shaped DTO view.
+ */
+export function scoringRulesOf(row: Pick<AttemptRow, 'quiz' | 'examination' | 'academyQuiz'>) {
+  const owner = row.quiz ?? row.examination ?? row.academyQuiz;
+  if (!owner) throw new Error('Attempt without an assessment');
+  return { negativeMarking: owner.negativeMarking, passPercent: owner.passPercent };
+}
+
+interface QuestionOutcomeWrite {
+  id: string;
+  awarded: string | null;
+  penalty: string;
+  isCorrect: boolean | null;
+}
+
+/** Scores an attempt in memory: the per-question writes and the attempt-level result. */
+function evaluate(row: AttemptRow, now: Date) {
+  const evaluation = scoreAttempt(scoringInput(row), scoringRulesOf(row));
+  const writes: QuestionOutcomeWrite[] = [];
+  row.questions.forEach((question, index) => {
+    const outcome = evaluation.outcomes[index]!;
+    if (question.type === 'SHORT_ANSWER' && outcome.pendingManual) return;
+    if (question.type === 'SHORT_ANSWER' && question.gradedAt !== null) return;
+    writes.push({
+      id: question.id,
+      awarded: outcome.awarded === null ? null : fromCents(outcome.awarded).toFixed(2),
+      penalty: fromCents(outcome.penalty).toFixed(2),
+      isCorrect: outcome.isCorrect,
+    });
   });
-  await Promise.all(
-    row.questions.map((question, index) => {
-      const outcome = evaluation.outcomes[index]!;
-      if (question.type === 'SHORT_ANSWER' && outcome.pendingManual) return null;
-      if (question.type === 'SHORT_ANSWER' && question.gradedAt !== null) return null;
-      return tx.attemptQuestion.update({
-        where: { id: question.id },
-        data: {
-          awardedMarks: outcome.awarded === null ? null : decimal(outcome.awarded),
-          penalty: decimal(outcome.penalty),
-          isCorrect: outcome.isCorrect,
-        },
-      });
-    }),
-  );
   const score = evaluation.score;
   return {
-    evaluationStatus: score ? ('EVALUATED' as const) : ('PENDING' as const),
-    rawScore: score ? decimal(score.rawScore) : null,
-    penalty: score ? decimal(score.penalty) : null,
-    score: score ? decimal(score.score) : null,
-    percent: score ? decimal(score.percent) : null,
-    passed: score ? score.passed : null,
-    evaluatedAt: score ? now : null,
+    writes,
+    scored: {
+      evaluationStatus: score ? ('EVALUATED' as const) : ('PENDING' as const),
+      rawScore: score ? decimal(score.rawScore) : null,
+      penalty: score ? decimal(score.penalty) : null,
+      score: score ? decimal(score.score) : null,
+      percent: score ? decimal(score.percent) : null,
+      passed: score ? score.passed : null,
+      evaluatedAt: score ? now : null,
+    },
   };
 }
 
+/** Rows per set-based UPDATE (4 parameters each; far below PostgreSQL's 65 535 limit). */
+const WRITE_CHUNK = 2_000;
+
+/**
+ * Writes per-question outcomes of one or many attempts with one UPDATE … FROM (VALUES …) per
+ * chunk instead of one UPDATE per question. Same columns and values as before.
+ */
+async function writeQuestionOutcomes(tx: DbClient, writes: QuestionOutcomeWrite[]) {
+  for (let start = 0; start < writes.length; start += WRITE_CHUNK) {
+    const values = writes
+      .slice(start, start + WRITE_CHUNK)
+      .map(
+        (w) =>
+          Prisma.sql`(${w.id}::uuid, ${w.awarded}::numeric, ${w.penalty}::numeric, ${w.isCorrect}::boolean)`,
+      );
+    await tx.$executeRaw`
+      UPDATE "attempt_questions" AS q
+         SET "awarded_marks" = v.awarded, "penalty" = v.penalty, "is_correct" = v.is_correct
+        FROM (VALUES ${Prisma.join(values)}) AS v(id, awarded, penalty, is_correct)
+       WHERE q."id" = v.id`;
+  }
+}
+
+async function writeEvaluation(tx: DbClient, row: AttemptRow, now: Date) {
+  const { writes, scored } = evaluate(row, now);
+  await writeQuestionOutcomes(tx, writes);
+  return scored;
+}
+
 export type FinalizationMode = 'SUBMITTED' | 'EXPIRED';
+
+/**
+ * The finalization writes for attempts that are LOCKED (FOR UPDATE) and IN_PROGRESS: scoring,
+ * status and the audit entry, set-based so a batch costs a handful of statements. The attempt
+ * UPDATE only matches IN_PROGRESS rows and the whole transaction is rolled back unless every row
+ * matched, so an attempt can never be finalized (or scored, or audited) twice.
+ */
+async function finalizeRowsLocked(
+  tx: DbClient,
+  rows: AttemptRow[],
+  mode: FinalizationMode,
+  now: Date,
+  actorId: string | null,
+): Promise<void> {
+  if (rows.length === 0) return;
+  for (const row of rows) {
+    if (row.status !== 'IN_PROGRESS') {
+      throw new Error(`finalizeLocked called on a ${row.status} attempt`);
+    }
+    if (mode === 'EXPIRED' && row.deadlineAt === null) {
+      throw new Error('An attempt without a deadline cannot expire');
+    }
+  }
+  const evaluated = rows.map((row) => ({ row, ...evaluate(row, now) }));
+  await writeQuestionOutcomes(
+    tx,
+    evaluated.flatMap((entry) => entry.writes),
+  );
+  const values = evaluated.map(({ row, scored }) => {
+    const submittedAt = mode === 'EXPIRED' ? row.deadlineAt! : now;
+    return Prisma.sql`(${row.id}::uuid, ${submittedAt}::timestamptz,
+      ${scored.evaluationStatus}::"evaluation_status", ${scored.rawScore?.toString() ?? null}::numeric,
+      ${scored.penalty?.toString() ?? null}::numeric, ${scored.score?.toString() ?? null}::numeric,
+      ${scored.percent?.toString() ?? null}::numeric, ${scored.passed}::boolean,
+      ${scored.evaluatedAt}::timestamptz)`;
+  });
+  const updated = await tx.$executeRaw`
+    UPDATE "assessment_attempts" AS a
+       SET "status" = ${mode}::"attempt_status",
+           "submitted_at" = v.submitted_at,
+           "finalized_at" = ${now}::timestamptz,
+           "evaluation_status" = v.evaluation_status,
+           "raw_score" = v.raw_score,
+           "penalty" = v.penalty,
+           "score" = v.score,
+           "percent" = v.percent,
+           "passed" = v.passed,
+           "evaluated_at" = v.evaluated_at,
+           "updated_at" = CURRENT_TIMESTAMP
+      FROM (VALUES ${Prisma.join(values)})
+           AS v(id, submitted_at, evaluation_status, raw_score, penalty, score, percent, passed, evaluated_at)
+     WHERE a."id" = v.id AND a."status" = 'IN_PROGRESS'`;
+  if (updated !== rows.length) {
+    throw new Error(`Finalization matched ${updated} of ${rows.length} attempts; rolled back`);
+  }
+  await tx.assessmentAuditLog.createMany({
+    data: evaluated.map(({ row, scored }) => ({
+      action: 'attempt.finalized',
+      actorId,
+      entityType: 'attempt',
+      entityId: row.id,
+      data: {
+        mode,
+        evaluationStatus: scored.evaluationStatus,
+        score: scored.score?.toString() ?? null,
+      },
+    })),
+  });
+}
 
 /**
  * THE finalization path. Must be called on a row locked with `lockAttempt` that is IN_PROGRESS.
@@ -341,33 +535,7 @@ export async function finalizeLocked(
   now: Date,
   actorId: string | null,
 ): Promise<AttemptRow> {
-  if (row.status !== 'IN_PROGRESS') {
-    throw new Error(`finalizeLocked called on a ${row.status} attempt`);
-  }
-  if (mode === 'EXPIRED' && row.deadlineAt === null) {
-    throw new Error('An attempt without a deadline cannot expire');
-  }
-  const scored = await writeEvaluation(tx, row, now);
-  await tx.assessmentAttempt.update({
-    where: { id: row.id },
-    data: {
-      status: mode,
-      submittedAt: mode === 'EXPIRED' ? row.deadlineAt! : now,
-      finalizedAt: now,
-      ...scored,
-    },
-  });
-  await audit(tx, {
-    action: 'attempt.finalized',
-    actorId,
-    entityType: 'attempt',
-    entityId: row.id,
-    data: {
-      mode,
-      evaluationStatus: scored.evaluationStatus,
-      score: scored.score?.toString() ?? null,
-    },
-  });
+  await finalizeRowsLocked(tx, [row], mode, now, actorId);
   return (await findAttempt(tx, row.id))!;
 }
 
@@ -396,32 +564,93 @@ export async function loadWithExpiry(id: string, now = clock.now()): Promise<Att
  */
 export async function finalizeAllInProgress(
   tx: DbClient,
-  where: { quizId: string } | { examinationId: string },
+  where: { quizId: string } | { examinationId: string } | { academyQuizId: string },
   now: Date,
   actorId: string,
 ): Promise<number> {
-  const running = await tx.assessmentAttempt.findMany({
-    where: { ...where, status: 'IN_PROGRESS' },
-    select: { id: true },
-  });
-  for (const { id } of running) {
-    const row = await lockAttempt(tx, id);
-    if (!row || row.status !== 'IN_PROGRESS') continue;
-    const cutoff = new Date(Math.max(now.getTime(), row.startedAt.getTime() + 1));
-    if (row.deadlineAt === null || row.deadlineAt > cutoff) {
-      await tx.assessmentAttempt.update({ where: { id }, data: { deadlineAt: cutoff } });
-    }
-    const updated = (await findAttempt(tx, id))!;
-    await finalizeLocked(tx, updated, 'EXPIRED', now, actorId);
+  const column = Prisma.raw(
+    'quizId' in where
+      ? '"quiz_id"'
+      : 'examinationId' in where
+        ? '"examination_id"'
+        : '"academy_quiz_id"',
+  );
+  const ownerId = Object.values(where)[0] as string;
+  // Lock every running attempt of the assessment at once, in a stable order (no deadlocks with
+  // per-attempt requests, which lock one row each).
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "assessment_attempts"
+     WHERE ${column} = ${ownerId}::uuid AND "status" = 'IN_PROGRESS'
+     ORDER BY "id"
+     FOR UPDATE`;
+  const ids = locked.map((row) => row.id);
+  for (let start = 0; start < ids.length; start += CLOSE_CHUNK) {
+    const chunk = ids.slice(start, start + CLOSE_CHUNK);
+    // Deadline moves to now (never before the start), and a per-question deadline never past it
+    // (both CHECK constraints require that).
+    await tx.$executeRaw`
+      UPDATE "assessment_attempts" AS a
+         SET "deadline_at" = c.cutoff,
+             "current_question_deadline_at" = CASE
+               WHEN a."current_question_deadline_at" > c.cutoff THEN c.cutoff
+               ELSE a."current_question_deadline_at" END,
+             "updated_at" = CURRENT_TIMESTAMP
+        FROM (SELECT "id", GREATEST(${now}::timestamptz, "started_at" + interval '1 millisecond') AS cutoff
+                FROM "assessment_attempts"
+               WHERE "id" IN (${Prisma.join(chunk.map((id) => Prisma.sql`${id}::uuid`))})) AS c
+       WHERE a."id" = c."id" AND (a."deadline_at" IS NULL OR a."deadline_at" > c.cutoff)`;
+    const rows = await tx.assessmentAttempt.findMany({
+      where: { id: { in: chunk }, status: 'IN_PROGRESS' },
+      select: attemptSelect,
+    });
+    await finalizeRowsLocked(tx, rows, 'EXPIRED', now, actorId);
   }
-  return running.length;
+  return ids.length;
+}
+
+/** Attempts finalized per statement batch when an assessment is closed. */
+const CLOSE_CHUNK = 200;
+
+const expiredWhere = (now: Date, extra: Prisma.Sql) => Prisma.sql`
+  "status" = 'IN_PROGRESS' AND "deadline_at" IS NOT NULL AND "deadline_at" <= ${now}::timestamptz
+  ${extra}`;
+
+/**
+ * One transaction: locks up to `batchSize` expired attempts (SKIP LOCKED, so parallel requests
+ * and instances never wait on each other or take the same row), loads them in one query and
+ * finalizes them set-based. Returns how many rows it locked.
+ */
+async function sweepBatch(now: Date, extra: Prisma.Sql, batchSize: number): Promise<number> {
+  return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "assessment_attempts"
+       WHERE ${expiredWhere(now, extra)}
+       ORDER BY "deadline_at", "id"
+       LIMIT ${batchSize}
+       FOR UPDATE SKIP LOCKED`;
+    if (locked.length === 0) return 0;
+    const rows = await tx.assessmentAttempt.findMany({
+      where: { id: { in: locked.map((row) => row.id) } },
+      select: attemptSelect,
+    });
+    // Re-checked under the lock: a row finalized meanwhile is no longer IN_PROGRESS.
+    await finalizeRowsLocked(
+      tx,
+      rows.filter((row) => isExpired(row, now)),
+      'EXPIRED',
+      now,
+      null,
+    );
+    return locked.length;
+  });
 }
 
 /**
  * Background/maintenance sweep: finalizes attempts whose deadline has passed and nobody touched
  * them since. `SKIP LOCKED` lets several API instances (or a request) work in parallel without
  * waiting on each other; finalization itself is idempotent. Restart-safe: deadlines live in the
- * database, nothing is kept in memory.
+ * database, nothing is kept in memory. Runs until nothing is left (course quizzes, exams and the
+ * long-running server's worker); request paths with a time limit use `finalizeExpiredBounded`.
  */
 export async function sweepExpiredAttempts(
   options: { now?: Date; batchSize?: number; where?: Prisma.Sql } = {},
@@ -431,25 +660,56 @@ export async function sweepExpiredAttempts(
   const extra = options.where ?? Prisma.empty;
   let total = 0;
   for (;;) {
-    const processed = await prisma.$transaction(async (tx) => {
-      const ids = await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "assessment_attempts"
-         WHERE "status" = 'IN_PROGRESS' AND "deadline_at" IS NOT NULL AND "deadline_at" <= ${now}
-         ${extra}
-         ORDER BY "deadline_at"
-         LIMIT ${batchSize}
-         FOR UPDATE SKIP LOCKED`;
-      for (const { id } of ids) {
-        const row = await findAttempt(tx, id);
-        if (row) await expireIfDue(tx, row, now);
-      }
-      return ids.length;
-    });
+    const processed = await sweepBatch(now, extra, batchSize);
     total += processed;
     if (processed < batchSize) break;
   }
   if (total > 0) logger.info({ finalized: total }, 'Expired assessment attempts finalized');
   return total;
+}
+
+export interface BoundedSweepResult {
+  /** Attempts locked and finalized by this call. */
+  finalized: number;
+  /** Expired attempts still IN_PROGRESS afterwards (including ones another request holds). */
+  remaining: number;
+}
+
+/**
+ * The same sweep with a bound, for request paths under a function time limit: at most
+ * `maxAttempts` attempts, and no new batch after `budgetMs` (wall time). Every batch commits on
+ * its own, so a retry continues where this one stopped and never re-finalizes anything.
+ * `remaining > 0` means callers must not show rankings or release results yet.
+ */
+export async function finalizeExpiredBounded(options: {
+  where: Prisma.Sql;
+  now?: Date;
+  batchSize?: number;
+  maxAttempts?: number;
+  budgetMs?: number;
+}): Promise<BoundedSweepResult> {
+  const now = options.now ?? clock.now();
+  const batchSize = options.batchSize ?? ACADEMY_FINALIZE_LIMITS.batchSize;
+  const maxAttempts = options.maxAttempts ?? ACADEMY_FINALIZE_LIMITS.maxPerRequest;
+  const budgetMs = options.budgetMs ?? ACADEMY_FINALIZE_LIMITS.budgetMs;
+  const started = performance.now();
+  let finalized = 0;
+  while (finalized < maxAttempts && performance.now() - started < budgetMs) {
+    const size = Math.min(batchSize, maxAttempts - finalized);
+    const processed = await sweepBatch(now, options.where, size);
+    finalized += processed;
+    if (processed < size) break;
+  }
+  const counted = await prisma.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS "count" FROM "assessment_attempts" WHERE ${expiredWhere(now, options.where)}`;
+  const count = counted[0]?.count ?? 0;
+  if (finalized > 0 || count > 0) {
+    logger.info(
+      { finalized, remaining: count, ms: Math.round(performance.now() - started) },
+      'Expired assessment attempts finalized (bounded)',
+    );
+  }
+  return { finalized, remaining: count };
 }
 
 /** Re-scores a finalized attempt after manual grading (still idempotent). */
@@ -478,10 +738,15 @@ export function answersRevealed(row: AttemptSummaryRow, now: Date): boolean {
 
 // --- Serialisers ----------------------------------------------------------------------------
 
-const num = (value: Prisma.Decimal | null): number | null =>
+export const num = (value: Prisma.Decimal | null): number | null =>
   value === null ? null : fromCents(toCents(value));
 
-export function scoreOf(row: AttemptSummaryRow): AttemptScoreDto | null {
+export function scoreOf(
+  row: Pick<
+    AttemptSummaryRow,
+    'evaluationStatus' | 'rawScore' | 'penalty' | 'score' | 'maxScore' | 'percent' | 'passed'
+  >,
+): AttemptScoreDto | null {
   if (row.evaluationStatus !== 'EVALUATED' || row.score === null) return null;
   return {
     rawScore: num(row.rawScore) ?? 0,
@@ -493,7 +758,7 @@ export function scoreOf(row: AttemptSummaryRow): AttemptScoreDto | null {
   };
 }
 
-function toAttemptQuestion(question: AttemptRow['questions'][number]): AttemptQuestionDto {
+export function toAttemptQuestion(question: AttemptRow['questions'][number]): AttemptQuestionDto {
   const snapshot = readSnapshot(question.snapshot);
   return {
     id: question.id,
@@ -503,7 +768,12 @@ function toAttemptQuestion(question: AttemptRow['questions'][number]): AttemptQu
     marks: num(question.marks) ?? 0,
     negativeMarks: num(question.negativeMarks) ?? 0,
     // The answer key never leaves the server here.
-    options: snapshot.options.map(({ id, text }) => ({ id, text })),
+    options: snapshot.options.map((option) => ({
+      id: option.id,
+      text: option.text,
+      image: optionImageDto(option),
+    })),
+    images: snapshot.images.map(toMediaDto),
     selectedOptionIds: question.selectedOptionIds,
     textAnswer: question.textAnswer,
     answerSequence: question.answerSequence,
@@ -527,7 +797,9 @@ export function toReviewQuestions(row: AttemptRow): ReviewQuestionDto[] {
         text: option.text,
         isCorrect: option.isCorrect,
         selected: selected.has(option.id),
+        image: optionImageDto(option),
       })),
+      images: snapshot.images.map(toMediaDto),
       textAnswer: question.textAnswer,
       answered: isAnswered(question),
       awardedMarks: num(question.awardedMarks),
@@ -615,10 +887,19 @@ export function toFacultyDetail(row: AttemptRow): FacultyAttemptDetail {
 // --- Counting -------------------------------------------------------------------------------
 
 export async function attemptCounts(
-  where: { quizId: { in: string[] } } | { examinationId: { in: string[] } },
+  where:
+    | { quizId: { in: string[] } }
+    | { examinationId: { in: string[] } }
+    | { academyQuizId: { in: string[] } },
 ) {
-  const key = 'quizId' in where ? 'quizId' : 'examinationId';
-  const ids = 'quizId' in where ? where.quizId.in : where.examinationId.in;
+  const key =
+    'quizId' in where ? 'quizId' : 'examinationId' in where ? 'examinationId' : 'academyQuizId';
+  const ids =
+    'quizId' in where
+      ? where.quizId.in
+      : 'examinationId' in where
+        ? where.examinationId.in
+        : where.academyQuizId.in;
   const counts = new Map<
     string,
     { total: number; inProgress: number; pendingEvaluation: number; evaluated: number }

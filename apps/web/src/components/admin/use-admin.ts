@@ -30,24 +30,23 @@ export const ADMIN_PERMISSIONS = [
   PERMISSIONS.CERTIFICATES_VIEW,
   PERMISSIONS.CERTIFICATES_MANAGE,
   PERMISSIONS.RECRUITMENT_MANAGE,
+  PERMISSIONS.ACADEMY_QUIZZES_MANAGE,
 ] as const;
 
+/**
+ * True when the user's EFFECTIVE permissions (the union of their role grants, as returned by
+ * `/auth/me`) include `permission`. Role names are deliberately not consulted: the API authorizes
+ * by permission, so the UI must offer exactly what the API will allow — e.g. an Admin never holds
+ * `admins.manage`, `roles.manage` or `audit_logs.view` and must not see those areas.
+ */
 export function hasPermission(user: AuthUser | null, permission: string): boolean {
   if (!user) return false;
-  if (user.roles.includes('SUPER_ADMIN')) return true;
-  if (
-    user.roles.includes('ADMIN') &&
-    (ADMIN_PERMISSIONS as readonly string[]).includes(permission)
-  ) {
-    return true;
-  }
-  return Boolean(user.permissions.includes(permission));
+  return user.permissions.includes(permission);
 }
 
 /** True when the user can use at least one area of the admin portal. */
 export function canUseAdminPortal(user: AuthUser | null): boolean {
   if (!user) return false;
-  if (user.roles.includes('SUPER_ADMIN') || user.roles.includes('ADMIN')) return true;
   return ADMIN_PERMISSIONS.some((permission) => hasPermission(user, permission));
 }
 

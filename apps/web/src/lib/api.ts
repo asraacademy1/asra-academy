@@ -56,8 +56,11 @@ export async function apiRequest<TData>(
   options: ApiRequestOptions = {},
 ): Promise<TData> {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  // A Blob (e.g. a compressed image) is sent as raw bytes with its own type.
+  const isBlob = typeof Blob !== 'undefined' && options.body instanceof Blob;
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (options.body !== undefined && !isFormData) headers['Content-Type'] = 'application/json';
+  if (isBlob) headers['Content-Type'] = (options.body as Blob).type || 'application/octet-stream';
+  else if (options.body !== undefined && !isFormData) headers['Content-Type'] = 'application/json';
   if (options.accessToken) headers.Authorization = `Bearer ${options.accessToken}`;
 
   let response: Response;
@@ -68,7 +71,7 @@ export async function apiRequest<TData>(
       body:
         options.body === undefined
           ? undefined
-          : isFormData
+          : isFormData || isBlob
             ? (options.body as BodyInit)
             : JSON.stringify(options.body),
       credentials: 'include',

@@ -54,13 +54,20 @@ const attemptNotFound = (): never => {
   throw new AppError('NOT_FOUND', 'Attempt not found');
 };
 
-/** Owner check WITHOUT loading or locking anything else (and without revealing existence). */
+/**
+ * Owner check WITHOUT loading or locking anything else (and without revealing existence). These
+ * are the COURSE quiz/exam routes: an academy-quiz attempt is a 404 here (it has its own routes
+ * and access rules), so the two can never be mixed.
+ */
 async function assertOwnAttempt(auth: AuthContext, id: string, db: DbClient = prisma) {
-  const owner = await db.assessmentAttempt.findUnique({ where: { id }, select: { userId: true } });
-  if (!owner || owner.userId !== auth.userId) attemptNotFound();
+  const owner = await db.assessmentAttempt.findUnique({
+    where: { id },
+    select: { userId: true, academyQuizId: true },
+  });
+  if (!owner || owner.userId !== auth.userId || owner.academyQuizId !== null) attemptNotFound();
 }
 
-function validateAnswer(question: AttemptRow['questions'][number], input: AnswerSaveInput) {
+export function validateAnswer(question: AttemptRow['questions'][number], input: AnswerSaveInput) {
   if (question.type === 'SHORT_ANSWER') {
     if (input.textAnswer === undefined) {
       throw fieldError('VALIDATION_ERROR', 'textAnswer', 'This question needs a written answer');
@@ -85,9 +92,9 @@ function validateAnswer(question: AttemptRow['questions'][number], input: Answer
   return { selectedOptionIds: input.selectedOptionIds, textAnswer: null };
 }
 
-const FINAL_MESSAGE =
+export const FINAL_MESSAGE =
   'This attempt has already been submitted, so its answers can no longer change.';
-const EXPIRED_MESSAGE =
+export const EXPIRED_MESSAGE =
   'Time is up. Your answers saved before the deadline have been submitted automatically.';
 
 // --- Student --------------------------------------------------------------------------------
@@ -240,6 +247,8 @@ export const studentAttemptService = {
 
 async function authorisedAttempt(auth: AuthContext, id: string, db: DbClient = prisma) {
   const row = (await findAttempt(db, id)) ?? attemptNotFound();
+  // Faculty review covers course quizzes/exams only; academy attempts are not theirs to see.
+  if (row.academyQuizId !== null) attemptNotFound();
   await accessPolicy.assertTeachesCourse(
     auth,
     assessmentOf(row).course.id,

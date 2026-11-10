@@ -35,6 +35,9 @@ export const PERMISSION_DEFINITIONS: Record<PermissionKey, string> = {
   [PERMISSIONS.CERTIFICATES_MANAGE]: 'Manage certificates, generate and revoke certificates',
   [PERMISSIONS.RECRUITMENT_MANAGE]:
     'Manage recruitment, job postings, applications, interviews, and candidate communications',
+  [PERMISSIONS.ACADEMY_QUIZZES_MANAGE]:
+    'Create and manage standalone Academy Quizzes, their questions, images and results',
+  [PERMISSIONS.ACADEMY_QUIZZES_PARTICIPATE]: 'Take published Academy Quizzes',
 };
 
 interface SystemRoleDefinition {
@@ -71,6 +74,7 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
       PERMISSIONS.CERTIFICATES_VIEW,
       PERMISSIONS.CERTIFICATES_MANAGE,
       PERMISSIONS.RECRUITMENT_MANAGE,
+      PERMISSIONS.ACADEMY_QUIZZES_MANAGE,
       PERMISSIONS.PROFILE_MANAGE_OWN,
     ],
   },
@@ -94,6 +98,7 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
       PERMISSIONS.CONTENT_VIEW_ENROLLED,
       PERMISSIONS.PROFILE_MANAGE_OWN,
       PERMISSIONS.PAYMENTS_MAKE_OWN,
+      PERMISSIONS.ACADEMY_QUIZZES_PARTICIPATE,
     ],
   },
 ];

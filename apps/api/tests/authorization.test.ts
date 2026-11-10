@@ -227,10 +227,30 @@ describe('GET /auth/me', () => {
     assert.deepEqual(response.body.data.roles, ['ADMIN']);
     assert.ok(response.body.data.permissions.includes(PERMISSIONS.COURSES_MANAGE));
     assert.ok(!response.body.data.permissions.includes(PERMISSIONS.ADMINS_MANAGE));
+    // The admin UI builds its navigation from this list, so Super Admin-only areas must be absent.
+    for (const key of [
+      PERMISSIONS.ROLES_MANAGE,
+      PERMISSIONS.AUDIT_LOGS_VIEW,
+      PERMISSIONS.SYSTEM_MANAGE,
+    ]) {
+      assert.ok(!response.body.data.permissions.includes(key), key);
+    }
     assert.doesNotMatch(response.text, /passwordHash|argon2|tokenHash/);
     assert.equal(
       Object.keys(response.body.data).sort().join(','),
       'email,emailVerified,fullName,id,permissions,roles',
+    );
+  });
+
+  it('a Super Admin receives every permission (the full Administration section)', async () => {
+    const client = new TestClient(apiUrl);
+    const response = await client.request<{ permissions: string[] }>('GET', '/auth/me', {
+      token: tokens.SUPER_ADMIN,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      [...response.body.data.permissions].sort(),
+      [...Object.values(PERMISSIONS)].sort(),
     );
   });
 

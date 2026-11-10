@@ -60,12 +60,26 @@ export const ASSESSMENT_RATE_LIMITS = {
   attemptStart: { windowMinutes: 1, limit: 20 },
   answerSave: { windowMinutes: 1, limit: 300 },
   attemptSubmit: { windowMinutes: 1, limit: 30 },
+  /** Question/option image uploads (each ≤ 100 KB). */
+  mediaUpload: { windowMinutes: 1, limit: 30 },
 } as const;
 
 export type AssessmentRateLimitName = keyof typeof ASSESSMENT_RATE_LIMITS;
 
 /** How often the API process finalizes attempts whose deadline passed while nobody was online. */
 export const ASSESSMENT_EXPIRY_SWEEP_MS = 30_000;
+
+/**
+ * Request-path finalization of expired Academy Quiz attempts (there is no scheduler on Vercel).
+ * One request finalizes at most `maxPerRequest` attempts, in transactions of `batchSize`, and
+ * starts no new batch once `budgetMs` has elapsed; the rest is reported as pending and the next
+ * request continues. Worst case per request ≈ budgetMs + one batch.
+ */
+export const ACADEMY_FINALIZE_LIMITS = {
+  batchSize: 50,
+  maxPerRequest: 250,
+  budgetMs: 3_000,
+} as const;
 
 // --- Payments (PHASE 10) ------------------------------------------------------------------
 

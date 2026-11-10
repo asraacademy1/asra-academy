@@ -26,6 +26,22 @@ export type AssessmentKind = 'QUIZ' | 'EXAM';
 export type AttemptResultState =
   'IN_PROGRESS' | 'PENDING_EVALUATION' | 'AWAITING_RELEASE' | 'RELEASED';
 
+// --- Media ----------------------------------------------------------------------------------
+
+/** An optimized question/option image (≤ 100 KB) served from Cloudinary. */
+export interface MediaDto {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+}
+
+/** `POST /faculty|admin/assessment-media` — the image can now be attached to a question. */
+export interface MediaUploadDto extends MediaDto {
+  bytes: number;
+  format: 'webp' | 'jpg' | 'png';
+}
+
 // --- Authoring (faculty) --------------------------------------------------------------------
 
 export interface QuestionOptionDto {
@@ -33,6 +49,7 @@ export interface QuestionOptionDto {
   text: string;
   isCorrect: boolean;
   position: number;
+  image: MediaDto | null;
 }
 
 export interface QuestionDto {
@@ -44,6 +61,10 @@ export interface QuestionDto {
   negativeMarks: number;
   position: number;
   options: QuestionOptionDto[];
+  /** Up to 3, in display order. */
+  images: MediaDto[];
+  /** Academy quizzes only (difficulty-based selection); always null for course quizzes/exams. */
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD' | null;
 }
 
 export interface AttemptCounts {
@@ -158,6 +179,7 @@ export interface ReviewOptionDto {
   text: string;
   isCorrect: boolean;
   selected: boolean;
+  image: MediaDto | null;
 }
 
 /** One question of a finalized attempt with the answer key — faculty, or a revealed student view. */
@@ -170,6 +192,7 @@ export interface ReviewQuestionDto {
   marks: number;
   negativeMarks: number;
   options: ReviewOptionDto[];
+  images: MediaDto[];
   textAnswer: string | null;
   answered: boolean;
   awardedMarks: number | null;
@@ -228,7 +251,8 @@ export interface AttemptQuestionDto {
   prompt: string;
   marks: number;
   negativeMarks: number;
-  options: { id: string; text: string }[];
+  options: { id: string; text: string; image: MediaDto | null }[];
+  images: MediaDto[];
   selectedOptionIds: string[];
   textAnswer: string | null;
   answerSequence: number;

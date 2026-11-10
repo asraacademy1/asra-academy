@@ -11,6 +11,7 @@ export * from './enquiry.js';
 export * from './student.js';
 export * from './faculty.js';
 export * from './assessment.js';
+export * from './academy-quiz.js';
 export * from './payments.js';
 export * from './notifications.js';
 export * from './admin.js';

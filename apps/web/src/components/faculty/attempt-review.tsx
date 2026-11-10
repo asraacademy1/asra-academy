@@ -22,6 +22,7 @@ import {
   QUESTION_TYPE_LABELS,
 } from '@/lib/assessments';
 import { describeError, validateForm, type FieldErrors } from '@/lib/auth/form-errors';
+import { OptionImage, QuestionImages, optionLetter } from '@/components/assessments/question-media';
 import { formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -138,6 +139,7 @@ export function AttemptReview({ attemptId }: { attemptId: string }) {
               </span>
               <MarksBadge question={question} />
             </div>
+            <QuestionImages images={question.images} />
             {question.type === 'SHORT_ANSWER' ? (
               <>
                 {/* Student text is rendered as text, never as HTML. */}
@@ -156,11 +158,11 @@ export function AttemptReview({ attemptId }: { attemptId: string }) {
               </>
             ) : (
               <ul className="grid gap-1 type-body-sm">
-                {question.options.map((option) => (
+                {question.options.map((option, optionIndex) => (
                   <li
                     key={option.id}
                     className={cn(
-                      'flex items-center gap-2',
+                      'flex items-start gap-2',
                       option.isCorrect && 'font-semibold text-success',
                     )}
                   >
@@ -173,9 +175,14 @@ export function AttemptReview({ attemptId }: { attemptId: string }) {
                     ) : (
                       <CircleDashed className="size-4 text-muted-foreground" aria-hidden />
                     )}
-                    {option.text}
-                    {option.isCorrect ? ' (correct)' : ''}
-                    {option.selected ? ' — chosen' : ''}
+                    <span className="grid gap-1">
+                      <span>
+                        {option.text || `Option ${optionLetter(optionIndex)}`}
+                        {option.isCorrect ? ' (correct)' : ''}
+                        {option.selected ? ' — chosen' : ''}
+                      </span>
+                      <OptionImage image={option.image} index={optionIndex} className="max-w-48" />
+                    </span>
                   </li>
                 ))}
               </ul>
