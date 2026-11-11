@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../../src/database/prisma.js';
+import { invalidateAnnouncementCache } from '../../src/modules/announcements/announcements.cache.js';
 
 /** Short unique suffix so tests never collide with each other or with leftovers. */
 export function uniqueSuffix(): string {
@@ -47,7 +48,8 @@ export async function cleanDomainTables(): Promise<void> {
     prisma.assessmentQuestion.deleteMany(),
     prisma.quiz.deleteMany(),
     prisma.examination.deleteMany(),
-    // Academy quizzes and the shared media ledger (options/banners reference media: RESTRICT).
+    // Academy quizzes, announcements and the shared media ledger (RESTRICT on media).
+    prisma.announcement.deleteMany(),
     prisma.academyQuizRegistration.deleteMany(),
     prisma.academyQuiz.deleteMany(),
     prisma.assessmentMedia.deleteMany(),
@@ -73,6 +75,7 @@ export async function cleanDomainTables(): Promise<void> {
     prisma.class.deleteMany(),
     prisma.academicLevel.deleteMany(),
   ]);
+  await invalidateAnnouncementCache();
 }
 
 /** Course → Module → Chapter → Lesson, the minimum chain for curriculum tests. */

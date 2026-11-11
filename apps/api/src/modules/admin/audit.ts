@@ -56,7 +56,17 @@ export type AdminAuditAction =
   | 'academy_quiz.closed'
   | 'academy_quiz.reopened'
   | 'academy_quiz.results_published'
-  | 'academy_quiz.questions_copied';
+  | 'academy_quiz.questions_copied'
+  | 'announcement.created'
+  | 'announcement.updated'
+  | 'announcement.priority_updated'
+  | 'announcement.published'
+  | 'announcement.scheduled'
+  | 'announcement.paused'
+  | 'announcement.resumed'
+  | 'announcement.archived'
+  | 'announcement.restored'
+  | 'announcement.deleted';
 
 export type AdminAuditEntity =
   | 'user'
@@ -69,7 +79,8 @@ export type AdminAuditEntity =
   | 'certificate_settings'
   | 'job'
   | 'job_application'
-  | 'academy_quiz';
+  | 'academy_quiz'
+  | 'announcement';
 
 export async function adminAudit(
   db: DbClient,

@@ -36,6 +36,7 @@ const ADMIN_GRANTS = [
   PERMISSIONS.CERTIFICATES_REVOKE,
   PERMISSIONS.RECRUITMENT_MANAGE,
   PERMISSIONS.ACADEMY_QUIZZES_MANAGE,
+  PERMISSIONS.ANNOUNCEMENTS_MANAGE,
   PERMISSIONS.PROFILE_MANAGE_OWN,
 ];
 const ALL_GRANTS = Object.values(PERMISSIONS);
@@ -139,6 +140,9 @@ describe('direct URL access', () => {
       '/admin/certificates/generate',
       '/admin/certificates/settings',
       '/admin/payments/orders/3f0c',
+      '/admin/announcements',
+      '/admin/announcements/new',
+      '/admin/announcements/3f0c/edit',
       '/admin/recruitment/jobs/3f0c/edit',
       '/admin/analytics/revenue',
     ]) {

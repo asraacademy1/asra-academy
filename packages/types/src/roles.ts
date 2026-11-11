@@ -75,6 +75,8 @@ export const PERMISSIONS = {
   ACADEMY_QUIZZES_MANAGE: 'academy_quizzes.manage',
   /** Take published Academy Quizzes (no course enrolment needed; eligibility still applies). */
   ACADEMY_QUIZZES_PARTICIPATE: 'academy_quizzes.participate',
+  /** Create, schedule, publish, pause and archive website announcements. */
+  ANNOUNCEMENTS_MANAGE: 'announcements.manage',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

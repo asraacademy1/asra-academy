@@ -92,6 +92,7 @@ export async function referencedMediaIds(db: DbClient, ids: string[]): Promise<S
         OR EXISTS (SELECT 1 FROM "assessment_question_options" o WHERE o."image_id" = x.id)
         OR EXISTS (SELECT 1 FROM "attempt_questions" a WHERE a."media_ids" @> ARRAY[x.id])
         OR EXISTS (SELECT 1 FROM "academy_quizzes" z WHERE z."banner_media_id" = x.id)
+        OR EXISTS (SELECT 1 FROM "announcements" ann WHERE ann."image_media_id" = x.id)
         OR EXISTS (
              SELECT 1 FROM "academy_quizzes" z
               WHERE z."prizes" @> jsonb_build_array(jsonb_build_object('imageMediaId', x.id::text)))`;

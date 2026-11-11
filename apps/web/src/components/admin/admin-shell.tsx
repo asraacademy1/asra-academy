@@ -19,6 +19,7 @@ import {
   Loader2,
   LogOut,
   Mail,
+  Megaphone,
   MonitorPlay,
   School,
   ShieldAlert,
@@ -207,6 +208,7 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: '/admin/payments', allOf: [PERMISSIONS.PAYMENTS_VIEW] },
   { prefix: '/admin/enrollments', allOf: [PERMISSIONS.ENROLLMENTS_MANAGE] },
   { prefix: '/admin/email-deliveries', allOf: [PERMISSIONS.NOTIFICATIONS_VIEW] },
+  { prefix: '/admin/announcements', allOf: [PERMISSIONS.ANNOUNCEMENTS_MANAGE] },
   { prefix: '/admin/recruitment', allOf: [PERMISSIONS.RECRUITMENT_MANAGE] },
   { prefix: '/admin/roles', allOf: [PERMISSIONS.ROLES_MANAGE] },
   { prefix: '/admin/audit-logs', allOf: [PERMISSIONS.AUDIT_LOGS_VIEW] },
@@ -345,6 +347,13 @@ export function buildNavigation(can: (permission: string) => boolean): NavGroup[
       label: 'Email delivery',
       href: '/admin/email-deliveries',
       icon: <Mail />,
+    },
+  ]);
+  push('Website Management', [
+    can(PERMISSIONS.ANNOUNCEMENTS_MANAGE) && {
+      label: 'Announcements',
+      href: '/admin/announcements',
+      icon: <Megaphone />,
     },
   ]);
   push('Recruitment', [

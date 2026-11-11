@@ -21,6 +21,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import * as React from 'react';
 
 import { canUseAdminPortal } from '@/components/admin/use-admin';
+import { AnnouncementProvider } from '@/components/announcements/announcement-provider';
 import { useAuth } from '@/components/auth/auth-provider';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
@@ -135,7 +136,7 @@ export function FacultyShell({ children }: { children: React.ReactNode }) {
         </>
       }
     >
-      {children}
+      <AnnouncementProvider audiences={['FACULTY']}>{children}</AnnouncementProvider>
     </DashboardLayout>
   );
 }
