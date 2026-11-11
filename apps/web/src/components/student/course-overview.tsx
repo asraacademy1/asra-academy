@@ -256,7 +256,7 @@ function CourseCertificateBanner({ courseId }: { courseId: string }) {
   const handleDownload = async (cert: CertificateDto, format: 'pdf' | 'png') => {
     try {
       setDownloadingFormat(format);
-      const blob = await api.download(`/api/v1/student/certificates/${cert.id}/download/${format}`);
+      const blob = await api.download(`/student/certificates/${cert.id}/download/${format}`);
       triggerBlobDownload(blob, `ASRA-Certificate-${cert.certificateNumber}.${format}`);
     } catch (err) {
       toast.error(`${format.toUpperCase()} download failed`, { description: errorMessage(err) });

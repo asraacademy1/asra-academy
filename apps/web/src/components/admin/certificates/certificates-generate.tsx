@@ -255,9 +255,7 @@ export function CertificatesGenerateAdmin() {
     if (!generatedCert) return;
     setDownloadingFormat(format);
     try {
-      const blob = await api.download(
-        `/api/v1/admin/certificates/${generatedCert.id}/download/${format}`,
-      );
+      const blob = await api.download(`/admin/certificates/${generatedCert.id}/download/${format}`);
       triggerBlobDownload(blob, `ASRA-Certificate-${generatedCert.certificateNumber}.${format}`);
     } catch (err) {
       toast.error(`${format.toUpperCase()} download failed`, { description: errorMessage(err) });

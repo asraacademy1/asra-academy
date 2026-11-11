@@ -47,6 +47,21 @@ export interface ApiRequestOptions {
 }
 
 /**
+ * Joins an API-relative path against `NEXT_PUBLIC_API_URL` (which already includes `/api/v1`),
+ * trimming trailing slashes on the base URL and avoiding a duplicated `/api/v1/api/v1` prefix.
+ */
+export function buildApiUrl(path: string, baseUrl = publicEnv.NEXT_PUBLIC_API_URL): string {
+  const normalizedBase = baseUrl.replace(/\/+$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const dedupedPath =
+    normalizedBase.endsWith('/api/v1') &&
+    (normalizedPath === '/api/v1' || normalizedPath.startsWith('/api/v1/'))
+      ? normalizedPath.slice('/api/v1'.length) || '/'
+      : normalizedPath;
+  return `${normalizedBase}${dedupedPath}`;
+}
+
+/**
  * The single fetch wrapper for the ASRA API. Always sends cookies (`credentials: 'include'`)
  * so the HttpOnly refresh cookie reaches `/auth/*`; never retries automatically.
  * Resolves with `data` on success, throws `ApiClientError` otherwise.
@@ -65,7 +80,7 @@ export async function apiRequest<TData>(
 
   let response: Response;
   try {
-    response = await fetch(`${publicEnv.NEXT_PUBLIC_API_URL}${path}`, {
+    response = await fetch(buildApiUrl(path), {
       method: options.method ?? 'GET',
       headers,
       body:

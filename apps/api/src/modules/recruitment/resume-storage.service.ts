@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/app-error.js';
 import { logger } from '../../lib/logger.js';
@@ -164,7 +165,8 @@ export class ResumeStorageService {
         const apiSecret = this.cloudinaryApiSecret!.trim();
         const timestamp = Math.floor(Date.now() / 1000);
         const folder = 'asra_recruitment_resumes';
-        const publicId = safeId.replace(/\.pdf$/, '');
+        // Cloudinary `raw` assets treat the file extension as part of `public_id`.
+        const publicId = safeId;
 
         // Generate SHA-1 signature for Cloudinary upload
         const paramsToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
@@ -252,6 +254,41 @@ export class ResumeStorageService {
   }
 
   /**
+   * Builds candidate Cloudinary delivery URLs for a stored `raw` resume asset.
+   * Covers both legacy uploads (where `.pdf` was stripped from `public_id`) and `.pdf`-suffixed
+   * uploads, across both Fixed Folder (`folder/public_id`) and Dynamic Folder (`public_id`
+   * without the folder prefix) Cloudinary environments.
+   */
+  public buildCloudinaryResumeUrls(cloudName: string, assetId: string): string[] {
+    const cleanId = assetId.trim().replace(/^\/+/, '');
+    if (!cleanId || cleanId.includes('..') || cleanId.includes('?') || cleanId.includes('#')) {
+      return [];
+    }
+    const folderPrefix = 'asra_recruitment_resumes/';
+    const withoutFolder = cleanId.startsWith(folderPrefix)
+      ? cleanId.slice(folderPrefix.length)
+      : cleanId;
+    const baseName = withoutFolder.replace(/\.pdf$/i, '');
+    const pdfName = `${baseName}.pdf`;
+
+    const candidatePublicIds = [
+      `asra_recruitment_resumes/${baseName}`,
+      baseName,
+      `asra_recruitment_resumes/${pdfName}`,
+      pdfName,
+    ];
+
+    const seen = new Set<string>();
+    const urls: string[] = [];
+    for (const publicId of candidatePublicIds) {
+      if (seen.has(publicId)) continue;
+      seen.add(publicId);
+      urls.push(`https://res.cloudinary.com/${cloudName}/raw/upload/${publicId}`);
+    }
+    return urls;
+  }
+
+  /**
    * Retrieves a resume stream for authorized admin viewing / downloading.
    */
   public async getResumeStream(
@@ -269,33 +306,54 @@ export class ResumeStorageService {
 
     // Check Cloudinary if configured
     if (this.isCloudinaryConfigured()) {
-      try {
-        const cloudName = this.cloudinaryCloudName!.trim();
-        const publicId = `asra_recruitment_resumes/${assetId.replace(/\.pdf$/, '')}`;
-        // Direct download URL for raw asset
-        const url = `https://res.cloudinary.com/${cloudName}/raw/upload/${publicId}.pdf`;
-        const res = await this.fetchImpl(url);
-        if (res.ok && res.body) {
-          const reader = res.body.getReader();
-          const stream = new Readable({
-            async read() {
-              const { done, value } = await reader.read();
-              if (done) {
-                this.push(null);
-              } else {
-                this.push(Buffer.from(value));
-              }
-            },
-          });
-          const len = Number(res.headers.get('content-length')) || 0;
-          return {
-            stream,
-            fileSize: len,
-            originalName: assetId,
-          };
+      const cloudName = this.cloudinaryCloudName!.trim();
+      const candidateUrls = this.buildCloudinaryResumeUrls(cloudName, assetId);
+      let blockedStatus: number | null = null;
+      let upstreamStatus: number | null = null;
+
+      for (const url of candidateUrls) {
+        try {
+          const res = await this.fetchImpl(url);
+          if (res.ok && res.body) {
+            const stream = Readable.fromWeb(res.body as unknown as NodeReadableStream);
+            const len = Number(res.headers.get('content-length')) || 0;
+            return {
+              stream,
+              fileSize: len,
+              originalName: assetId,
+            };
+          }
+          await res.body?.cancel().catch(() => undefined);
+          if (res.status === 401 || res.status === 403) {
+            blockedStatus = res.status;
+            logger.warn(
+              { status: res.status, xCldError: res.headers.get('x-cld-error'), url, assetId },
+              'Cloudinary denied resume delivery (check Settings -> Security -> Allow delivery of PDF and ZIP files)',
+            );
+          } else if (res.status !== 404) {
+            upstreamStatus = res.status;
+            logger.warn(
+              { status: res.status, url, assetId },
+              'Unexpected Cloudinary status fetching resume',
+            );
+          }
+        } catch (err) {
+          upstreamStatus = 502;
+          logger.error({ err, url, assetId }, 'Could not retrieve resume from Cloudinary');
         }
-      } catch (err) {
-        logger.error({ err, assetId }, 'Could not retrieve resume from Cloudinary');
+      }
+
+      if (blockedStatus !== null) {
+        throw new AppError(
+          'SERVICE_UNAVAILABLE',
+          'Resume delivery was blocked by cloud storage permissions. Verify Cloudinary PDF delivery settings.',
+        );
+      }
+      if (upstreamStatus !== null) {
+        throw new AppError(
+          'SERVICE_UNAVAILABLE',
+          'Could not retrieve resume from cloud storage. Please try again.',
+        );
       }
     }
 
@@ -305,14 +363,14 @@ export class ResumeStorageService {
     }
 
     // Check local filesystem (development only)
-    const filePath = path.join(this.localUploadsDir, assetId);
+    const filePath = path.join(this.localUploadsDir, path.basename(assetId));
     if (fs.existsSync(filePath)) {
       const stat = await fs.promises.stat(filePath);
       const stream = fs.createReadStream(filePath);
       return {
         stream,
         fileSize: stat.size,
-        originalName: assetId,
+        originalName: path.basename(assetId),
       };
     }
 

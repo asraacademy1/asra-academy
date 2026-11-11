@@ -220,7 +220,7 @@ export function CertificatesTemplatesAdmin() {
     setPreviewingFormat(format);
     try {
       const blob = await api.download(
-        `/api/v1/admin/certificates/templates/${activeTemplate.id}/preview${format === 'png' ? '/png' : ''}`,
+        `/admin/certificates/templates/${activeTemplate.id}/preview${format === 'png' ? '/png' : ''}`,
       );
       triggerBlobDownload(blob, `ASRA-Template-${activeTemplate.key}-Preview.${format}`);
     } catch (err) {

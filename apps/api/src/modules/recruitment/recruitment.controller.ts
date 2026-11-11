@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import type { AdminApplicationQuery, AdminJobQuery, PublicJobQuery } from '@asra/validation';
+import { logger } from '../../lib/logger.js';
 import { sendSuccess } from '../../utils/api-response.js';
 import { AppError } from '../../utils/app-error.js';
 import { recruitmentService } from './recruitment.service.js';
@@ -238,6 +239,19 @@ export const recruitmentController = {
     if (fileSize > 0) {
       res.setHeader('Content-Length', String(fileSize));
     }
+
+    stream.on('error', (err) => {
+      logger.error({ err, applicationId: id }, 'Failed while streaming resume response');
+      if (!res.headersSent) {
+        res.status(502).json({
+          success: false,
+          message: 'Failed to stream resume file',
+          error: { code: 'SERVICE_UNAVAILABLE' },
+        });
+      } else {
+        res.destroy(err);
+      }
+    });
 
     stream.pipe(res);
   },
