@@ -167,10 +167,11 @@ model User {
   liveClassesUpdated   LiveClassSession[]     @relation("LiveClassUpdatedBy")
   notifications        Notification[]
 
-  quizzesCreated        Quiz[]               @relation("QuizCreatedBy")
-  examinationsCreated   Examination[]        @relation("ExaminationCreatedBy")
-  academyQuizzesCreated AcademyQuiz[]        @relation("AcademyQuizCreatedBy")
-  assessmentMedia       AssessmentMedia[]    @relation("AssessmentMediaUploadedBy")
+  quizzesCreated             Quiz[]                    @relation("QuizCreatedBy")
+  examinationsCreated        Examination[]             @relation("ExaminationCreatedBy")
+  academyQuizzesCreated      AcademyQuiz[]             @relation("AcademyQuizCreatedBy")
+  academyQuizRegistrations   AcademyQuizRegistration[] @relation("AcademyQuizRegistrationUser")
+  assessmentMedia            AssessmentMedia[]         @relation("AssessmentMediaUploadedBy")
   assessmentAttempts    AssessmentAttempt[]  @relation("AttemptStudent")
   answersGraded         AttemptQuestion[]    @relation("AttemptQuestionGradedBy")
   assessmentAuditLogs   AssessmentAuditLog[] @relation("AuditActor")
@@ -923,6 +924,13 @@ model LiveClassSession {
 // change what a student answered or how it was scored. Marks are DECIMAL(…,2) (two decimals).
 // =============================================================================
 
+enum AcademyQuizVisibility {
+  PUBLIC
+  PRIVATE
+
+  @@map("academy_quiz_visibility")
+}
+
 /// Lifecycle of a quiz or examination. DRAFT: editable, invisible to students. PUBLISHED: open
 /// under its rules (questions frozen). CLOSED: no new attempts; history and results kept.
 enum AssessmentStatus {
@@ -1366,23 +1374,43 @@ model AcademyQuiz {
   attemptCounting        AttemptCounting       @default(BEST) @map("attempt_counting")
   tieBreak               RankingTieBreak       @default(TIME_TAKEN) @map("tie_break")
   status                 AssessmentStatus      @default(DRAFT)
+  visibility             AcademyQuizVisibility @default(PUBLIC)
   publishedAt            DateTime?             @map("published_at") @db.Timestamptz(3)
   closedAt               DateTime?             @map("closed_at") @db.Timestamptz(3)
   createdById            String?               @map("created_by_id") @db.Uuid
   createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  bannerMedia  AssessmentMedia?     @relation("AcademyQuizBanner", fields: [bannerMediaId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  createdBy    User?                @relation("AcademyQuizCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  questions    AssessmentQuestion[]
-  attempts     AssessmentAttempt[]
-  certificates Certificate[]
+  bannerMedia   AssessmentMedia?          @relation("AcademyQuizBanner", fields: [bannerMediaId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy     User?                     @relation("AcademyQuizCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  questions     AssessmentQuestion[]
+  attempts      AssessmentAttempt[]
+  certificates  Certificate[]
+  registrations AcademyQuizRegistration[]
 
   @@index([status, startsAt])
   @@index([status, endsAt])
+  @@index([status, visibility, startsAt])
+  @@index([status, visibility, endsAt])
   @@index([createdById])
   @@index([bannerMediaId])
   @@map("academy_quizzes")
+}
+
+/// Verified student registration for a published public Academy Quiz (separate from attempts).
+model AcademyQuizRegistration {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId       String   @map("quiz_id") @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  registeredAt DateTime @default(now()) @map("registered_at") @db.Timestamptz(3)
+
+  quiz AcademyQuiz @relation(fields: [quizId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user User        @relation("AcademyQuizRegistrationUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([quizId, userId])
+  @@index([userId, registeredAt])
+  @@index([quizId, registeredAt])
+  @@map("academy_quiz_registrations")
 }
 
 /// Append-only record of consequential assessment actions (publication, finalization, grading,

@@ -10,6 +10,7 @@ import {
 import {
   ACADEMY_QUIZ_DEFAULTS,
   ACADEMY_QUIZ_LIMITS,
+  ACADEMY_QUIZ_VISIBILITIES,
   ANSWER_REVEALS,
   ATTEMPT_COUNTINGS,
   LEADERBOARD_VISIBILITIES,
@@ -40,6 +41,7 @@ import {
   RESULT_RELEASE_LABELS,
   SELECTION_LABELS,
   TIE_BREAK_LABELS,
+  VISIBILITY_LABELS,
   emptyForm,
   formFromDetail,
   formToBody,
@@ -164,7 +166,7 @@ export function AcademyQuizForm({ quiz }: { quiz?: AdminAcademyQuizDetail }) {
           hint={
             locked('slug')
               ? 'Locked after publication.'
-              : 'Leave empty to create it from the title, e.g. /quizzes/science-olympiad.'
+              : 'Leave empty to create it from the title, e.g. /participate/quizzes/science-olympiad.'
           }
         >
           <Input
@@ -224,6 +226,18 @@ export function AcademyQuizForm({ quiz }: { quiz?: AdminAcademyQuizDetail }) {
             <p className="type-body-sm text-destructive">{errors.bannerMediaId}</p>
           ) : null}
         </div>
+        <SelectField
+          id="aq-visibility"
+          label="Public visibility"
+          value={form.visibility}
+          onValueChange={(value) => set({ visibility: value as QuizFormState['visibility'] })}
+          options={ACADEMY_QUIZ_VISIBILITIES.map((value) => ({
+            value,
+            label: VISIBILITY_LABELS[value],
+          }))}
+          error={errors.visibility}
+          hint="Controls whether published quizzes appear on the public Participate portal. Drafts are never public."
+        />
       </Section>
 
       <Section title="Schedule and timing">

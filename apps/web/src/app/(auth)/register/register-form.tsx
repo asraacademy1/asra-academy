@@ -77,7 +77,7 @@ export function RegisterForm() {
       description="Join ASRA Academy as a student."
       footer={
         <p>
-          Already have an account? <AuthLink href="/login">Sign in</AuthLink>
+          Already have an account? <AuthLink href={signIn}>Sign in</AuthLink>
         </p>
       }
     >

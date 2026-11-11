@@ -6,7 +6,7 @@ import {
   type AdminAuditEntryDto,
   type Paginated,
 } from '@asra/types';
-import { AlertTriangle, CheckCircle2, Copy, Pencil } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, Lock, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import * as React from 'react';
@@ -28,6 +28,7 @@ import {
   SELECTION_LABELS,
   TIE_BREAK_LABELS,
   availableActions,
+  publicQuizAccessState,
   timingSummary,
   type QuizAction,
 } from '@/lib/admin/academy-quizzes';
@@ -39,6 +40,7 @@ import { ConfirmDialog, ErrorPanel, LoadingPanel } from '../admin-ui';
 import { errorMessage, hasPermission, useAdminApi, useApiResource } from '../use-admin';
 import { AcademyAttemptsSection, AdminLeaderboardSection } from './attempts';
 import { CopyQuestionsDialog } from './copy-questions-dialog';
+import { AcademyParticipantsSection } from './participants';
 import { ADMIN_MEDIA_UPLOAD } from './quiz-form';
 import { PhaseBadge } from './quiz-list';
 
@@ -105,6 +107,7 @@ export function AcademyQuizDetail({ id }: { id: string }) {
   const quiz = useApiResource(path, () => api.get<AdminAcademyQuizDetail>(path));
   const [confirming, setConfirming] = React.useState<QuizAction | null>(null);
   const [copying, setCopying] = React.useState(false);
+  const [copiedPublicUrl, setCopiedPublicUrl] = React.useState(false);
 
   if (quiz.error && !quiz.data) {
     return <ErrorPanel message={errorMessage(quiz.error)} onRetry={quiz.reload} />;
@@ -113,6 +116,23 @@ export function AcademyQuizDetail({ id }: { id: string }) {
   const data = quiz.data;
   const actions = availableActions(data);
   const draft = data.status === 'DRAFT';
+  const publicAccess = publicQuizAccessState(data);
+
+  async function copyPublicUrl() {
+    if (!publicAccess.available) return;
+    const url =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}${publicAccess.path}`
+        : publicAccess.path;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedPublicUrl(true);
+      toast.success('Public URL copied');
+      setTimeout(() => setCopiedPublicUrl(false), 2000);
+    } catch {
+      toast.error('Could not copy URL', { description: url });
+    }
+  }
 
   async function run(action: QuizAction) {
     try {
@@ -139,7 +159,11 @@ export function AcademyQuizDetail({ id }: { id: string }) {
     <div className="grid gap-6">
       <PageHeader
         title={data.title}
-        description={`/student/academy-quizzes/${data.slug}`}
+        description={
+          publicAccess.available
+            ? `${publicAccess.path} · /student/academy-quizzes/${data.slug}`
+            : `/student/academy-quizzes/${data.slug}`
+        }
         breadcrumbs={[
           { label: 'Academy Quizzes', href: '/admin/academy-quizzes' },
           { label: data.title },
@@ -147,6 +171,19 @@ export function AcademyQuizDetail({ id }: { id: string }) {
         actions={
           <span className="flex flex-wrap items-center gap-2">
             <PhaseBadge phase={data.phase} />
+            {publicAccess.available ? (
+              <>
+                <Button asChild variant="outline">
+                  <Link href={publicAccess.path} target="_blank" rel="noopener">
+                    <ExternalLink aria-hidden /> View Public Page
+                  </Link>
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void copyPublicUrl()}>
+                  {copiedPublicUrl ? <Check aria-hidden /> : <Copy aria-hidden />}
+                  {copiedPublicUrl ? 'Copied' : 'Copy Public URL'}
+                </Button>
+              </>
+            ) : null}
             <Button asChild variant="outline">
               <Link href={`${path}/edit`}>
                 <Pencil aria-hidden /> Settings
@@ -188,7 +225,12 @@ export function AcademyQuizDetail({ id }: { id: string }) {
         </Section>
         <Section title="Attempts">
           <dl className="grid gap-2 type-body-sm">
-            <Row label="Total">{data.attempts.total}</Row>
+            <Row label="Registrations">
+              <a href="#participants" className="font-medium text-primary hover:underline">
+                {data.registrationsCount ?? 0}
+              </a>
+            </Row>
+            <Row label="Total attempts">{data.attempts.total}</Row>
             <Row label="In progress">{data.attempts.inProgress}</Row>
             <Row label="Evaluated">{data.attempts.evaluated}</Row>
             <Row label="Per student">{data.settings.maxAttempts}</Row>
@@ -230,6 +272,14 @@ export function AcademyQuizDetail({ id }: { id: string }) {
         />
       </div>
 
+      <div id="participants">
+        <AcademyParticipantsSection
+          quizId={id}
+          quizSlug={data.slug}
+          timeZone={data.settings.timeZone}
+        />
+      </div>
+
       {draft ? null : (
         <>
           <AcademyAttemptsSection quizId={id} />
@@ -237,7 +287,7 @@ export function AcademyQuizDetail({ id }: { id: string }) {
         </>
       )}
 
-      <SettingsSummary quiz={data} />
+      <SettingsSummary quiz={data} publicAccess={publicAccess} />
       <PrizesPreview quiz={data} />
       {hasPermission(user, PERMISSIONS.AUDIT_LOGS_VIEW) ? <History quizId={id} /> : null}
 
@@ -362,11 +412,27 @@ export function Readiness({ quiz }: { quiz: AdminAcademyQuizDetail }) {
   );
 }
 
-function SettingsSummary({ quiz }: { quiz: AdminAcademyQuizDetail }) {
+function SettingsSummary({
+  quiz,
+  publicAccess,
+}: {
+  quiz: AdminAcademyQuizDetail;
+  publicAccess: ReturnType<typeof publicQuizAccessState>;
+}) {
   const s = quiz.settings;
   return (
     <Section title="Rules" description="As students will see them on the instructions screen.">
       <dl className="grid gap-2 type-body-sm sm:grid-cols-2">
+        <Row label="Public visibility">{s.visibility === 'PUBLIC' ? 'Public' : 'Private'}</Row>
+        <Row label="Public page">
+          {publicAccess.available ? (
+            publicAccess.path
+          ) : (
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <Lock className="size-3.5" aria-hidden /> Unavailable
+            </span>
+          )}
+        </Row>
         <Row label="Navigation">{NAVIGATION_LABELS[s.navigation]}</Row>
         <Row label="Answer required to continue">{s.requireAnswerToAdvance ? 'Yes' : 'No'}</Row>
         <Row label="Shuffle questions / options">
