@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type {
   AdminCreateJobInput,
   AdminUpdateJobInput,
@@ -1664,7 +1665,7 @@ export class RecruitmentService {
     return this.getAdminApplicationById(applicationId);
   }
 
-  public async getResumeStream(adminId: string, applicationId: string) {
+  public async getResumeStream(_adminId: string, applicationId: string) {
     const app = await prisma.jobApplication.findUnique({
       where: { id: applicationId },
       select: { resumeAssetId: true, resumeOriginalName: true, resumeMimeType: true },
@@ -1674,7 +1675,15 @@ export class RecruitmentService {
       throw new AppError('NOT_FOUND', 'Resume not found for this application');
     }
 
-    return resumeStorageService.getResumeStream(app.resumeAssetId);
+    const result = await resumeStorageService.getResumeStream(app.resumeAssetId);
+    const safeOriginalName = app.resumeOriginalName
+      ? path.basename(app.resumeOriginalName).replace(/["\r\n\\]/g, '_')
+      : result.originalName;
+
+    return {
+      ...result,
+      originalName: safeOriginalName || result.originalName,
+    };
   }
 }
 

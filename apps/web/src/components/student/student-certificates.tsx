@@ -67,8 +67,8 @@ export function StudentCertificatesGallery() {
       setDownloadingKey(key);
       const endpoint =
         format === 'png'
-          ? `/api/v1/student/certificates/${cert.id}/download/png`
-          : `/api/v1/student/certificates/${cert.id}/download/pdf`;
+          ? `/student/certificates/${cert.id}/download/png`
+          : `/student/certificates/${cert.id}/download/pdf`;
       const blob = await api.download(endpoint);
       triggerBlobDownload(blob, `ASRA-Certificate-${cert.certificateNumber}.${format}`);
     } catch (err) {

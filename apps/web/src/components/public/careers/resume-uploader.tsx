@@ -4,7 +4,7 @@ import { CheckCircle2, FileText, Loader2, UploadCloud, X } from 'lucide-react';
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
-import { publicEnv } from '@/lib/env';
+import { buildApiUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 export interface UploadedResumeInfo {
@@ -58,7 +58,7 @@ export function ResumeUploader({
       const formData = new FormData();
       formData.append('resume', file);
 
-      const response = await fetch(`${publicEnv.NEXT_PUBLIC_API_URL}/careers/upload-resume`, {
+      const response = await fetch(buildApiUrl('/careers/upload-resume'), {
         method: 'POST',
         body: formData,
         headers: {

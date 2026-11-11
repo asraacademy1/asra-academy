@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { buildApiUrl } from '@/lib/api';
 import {
   formatDate,
   formatDateTime,
@@ -131,5 +132,35 @@ describe('isActivePath', () => {
     assert.equal(isActivePath('/faculty/', '/faculty'), true);
     assert.equal(isActivePath('/faculty?page=2', '/faculty'), true);
     assert.equal(isActivePath(null, '/faculty'), false);
+  });
+});
+
+describe('buildApiUrl', () => {
+  const prodBase = 'https://api.asraacademy.in/api/v1';
+
+  it('joins API-relative certificate and resume paths once without duplicating /api/v1', () => {
+    assert.equal(
+      buildApiUrl('/admin/certificates/templates/tpl-1/preview', prodBase),
+      'https://api.asraacademy.in/api/v1/admin/certificates/templates/tpl-1/preview',
+    );
+    assert.equal(
+      buildApiUrl('/admin/certificates/templates/tpl-1/preview/png', prodBase),
+      'https://api.asraacademy.in/api/v1/admin/certificates/templates/tpl-1/preview/png',
+    );
+    assert.equal(
+      buildApiUrl('/admin/recruitment/applications/app-1/resume', prodBase),
+      'https://api.asraacademy.in/api/v1/admin/recruitment/applications/app-1/resume',
+    );
+  });
+
+  it('strips trailing slashes on baseUrl and deduplicates /api/v1 prefixes', () => {
+    assert.equal(
+      buildApiUrl('/api/v1/admin/certificates/templates/tpl-1/preview', `${prodBase}/`),
+      'https://api.asraacademy.in/api/v1/admin/certificates/templates/tpl-1/preview',
+    );
+    assert.equal(
+      buildApiUrl('student/certificates/cert-1/download/pdf', `${prodBase}///`),
+      'https://api.asraacademy.in/api/v1/student/certificates/cert-1/download/pdf',
+    );
   });
 });

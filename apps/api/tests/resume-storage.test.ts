@@ -106,6 +106,104 @@ describe('ResumeStorageService — Cloudinary & Storage Enforcement', () => {
     );
     assert.equal(firstCall.init?.method, 'POST');
     assert.ok(firstCall.init?.body instanceof FormData);
+    const uploadedPublicId = firstCall.init.body.get('public_id');
+    assert.equal(
+      uploadedPublicId,
+      result.assetId,
+      'Cloudinary raw upload public_id must retain the .pdf extension',
+    );
+  });
+
+  it('resolves and streams legacy Fixed-Folder and Dynamic-Folder Cloudinary raw resumes without .pdf suffix', async () => {
+    const assetId = 'resume_0123456789abcdef0123456789abcdef.pdf';
+    const baseName = 'resume_0123456789abcdef0123456789abcdef';
+
+    for (const matchingUrl of [
+      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/asra_recruitment_resumes/${baseName}`,
+      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/${baseName}`,
+      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/asra_recruitment_resumes/${assetId}`,
+      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/${assetId}`,
+    ]) {
+      const seenUrls: string[] = [];
+      const mockFetch = (async (input: string | URL | Request) => {
+        const url = String(input);
+        seenUrls.push(url);
+        if (url === matchingUrl) {
+          return new Response(VALID_PDF, {
+            status: 200,
+            headers: {
+              'content-type': 'application/pdf',
+              'content-length': String(VALID_PDF.length),
+            },
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      }) as typeof fetch;
+
+      const service = new ResumeStorageService({
+        ...MOCK_CREDENTIALS,
+        isProduction: true,
+        fetchImpl: mockFetch,
+      });
+
+      const result = await service.getResumeStream(assetId);
+      const chunks: Buffer[] = [];
+      for await (const chunk of result.stream) {
+        chunks.push(Buffer.from(chunk));
+      }
+      assert.equal(Buffer.concat(chunks).toString(), VALID_PDF.toString());
+      assert.equal(result.fileSize, VALID_PDF.length);
+      assert.ok(seenUrls.includes(matchingUrl));
+    }
+  });
+
+  it('surfaces SERVICE_UNAVAILABLE (not fake NOT_FOUND) when Cloudinary blocks delivery with 401/403', async () => {
+    const assetId = 'resume_blocked_pdf_delivery_test.pdf';
+    const mockFetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/raw/upload/asra_recruitment_resumes/resume_blocked_pdf_delivery_test')) {
+        return new Response('Unauthorized', {
+          status: 401,
+          headers: { 'x-cld-error': 'deny or ACL failure' },
+        });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    const service = new ResumeStorageService({
+      ...MOCK_CREDENTIALS,
+      isProduction: true,
+      fetchImpl: mockFetch,
+    });
+
+    await assert.rejects(
+      () => service.getResumeStream(assetId),
+      (err: unknown) => {
+        assert.ok(err instanceof AppError);
+        assert.equal(err.code, 'SERVICE_UNAVAILABLE');
+        assert.match(err.message, /Cloudinary PDF delivery/i);
+        return true;
+      },
+    );
+  });
+
+  it('rejects path traversal assetIds without requesting Cloudinary or reading parent directories', async () => {
+    const { impl: mockFetch, calls } = createMockFetch({ status: 200, body: 'leak' });
+    const service = new ResumeStorageService({
+      ...MOCK_CREDENTIALS,
+      isProduction: true,
+      fetchImpl: mockFetch,
+    });
+
+    await assert.rejects(
+      () => service.getResumeStream('../etc/passwd'),
+      (err: unknown) => {
+        assert.ok(err instanceof AppError);
+        assert.equal(err.code, 'NOT_FOUND');
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0);
   });
 
   it('handles Cloudinary upload HTTP errors safely in production without falling back to local disk', async () => {

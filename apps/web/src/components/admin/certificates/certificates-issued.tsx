@@ -87,7 +87,7 @@ export function CertificatesIssuedAdmin() {
     const key = `${cert.id}:${format}`;
     try {
       setDownloadingKey(key);
-      const blob = await api.download(`/api/v1/admin/certificates/${cert.id}/download/${format}`);
+      const blob = await api.download(`/admin/certificates/${cert.id}/download/${format}`);
       triggerBlobDownload(blob, `ASRA-Certificate-${cert.certificateNumber}.${format}`);
     } catch (err) {
       toast.error(`${format.toUpperCase()} download failed`, { description: errorMessage(err) });

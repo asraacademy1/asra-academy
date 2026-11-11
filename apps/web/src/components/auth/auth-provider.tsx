@@ -3,9 +3,14 @@
 import type { AuthSessionData, AuthUser } from '@asra/types';
 import type { LoginInput } from '@asra/validation';
 import * as React from 'react';
-import { ApiClientError, apiRequest, type ApiRequestOptions } from '@/lib/api';
+import {
+  ApiClientError,
+  apiRequest,
+  buildApiUrl,
+  type ApiRequestOptions,
+  type ClientErrorCode,
+} from '@/lib/api';
 import { authApi } from '@/lib/auth/auth-api';
-import { publicEnv } from '@/lib/env';
 
 type AuthStatus = 'loading' | 'authenticated' | 'anonymous';
 
@@ -141,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async authorizedDownload(path: string): Promise<Blob> {
         let token = accessToken.current ?? (await refresh())?.accessToken;
         if (!token) throw new ApiClientError(401, 'UNAUTHORIZED', 'Please sign in to continue.');
-        const url = `${publicEnv.NEXT_PUBLIC_API_URL}${path}`;
+        const url = buildApiUrl(path);
         let res = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` },
           credentials: 'include',
@@ -162,7 +167,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           });
         }
         if (!res.ok) {
-          throw new ApiClientError(res.status, 'BAD_REQUEST', 'Failed to download file.');
+          let code: ClientErrorCode = 'BAD_REQUEST';
+          let message = 'Failed to download file.';
+          try {
+            const errBody = (await res.json()) as {
+              error?: { code?: ClientErrorCode };
+              message?: string;
+            };
+            if (errBody?.error?.code) code = errBody.error.code;
+            if (errBody?.message) message = errBody.message;
+          } catch {
+            // Keep fallback message for non-JSON error bodies
+          }
+          throw new ApiClientError(res.status, code, message);
         }
         return res.blob();
       },

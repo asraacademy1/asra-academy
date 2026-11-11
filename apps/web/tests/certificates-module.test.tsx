@@ -2,6 +2,8 @@
  * Generic Certificate Management Module — Web Unit & Component Rendering Tests
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import type { PublicCertificateVerificationDto } from '@asra/types';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -14,6 +16,7 @@ import {
   type PreviewSignatureItem,
 } from '@/components/certificates/certificate-preview';
 import { CertificateVerificationView } from '@/components/public/certificate-verification';
+import { buildApiUrl } from '@/lib/api';
 
 const SAMPLE_SIGNATURES: PreviewSignatureItem[] = [
   {
@@ -249,5 +252,39 @@ describe('CertificateVerificationView generic sources & privacy', () => {
     );
     assert.ok(html.includes('Certificate Superseded (No Longer Valid)'));
     assert.ok(html.includes('ASRA-2026-NEWW-4444'));
+  });
+});
+
+describe('Certificate download & preview URL construction (regression)', () => {
+  it('never duplicates /api/v1 in certificate preview or download client callers', () => {
+    const srcRoot = path.resolve(import.meta.dirname, '../src');
+    const files = [
+      'components/admin/certificates/certificates-templates.tsx',
+      'components/admin/certificates/certificates-generate.tsx',
+      'components/admin/certificates/certificates-issued.tsx',
+      'components/admin/certificates/certificates-overview.tsx',
+      'components/student/student-certificates.tsx',
+      'components/student/course-overview.tsx',
+    ];
+    for (const relPath of files) {
+      const source = fs.readFileSync(path.join(srcRoot, relPath), 'utf8');
+      assert.equal(
+        source.includes('/api/v1/'),
+        false,
+        `${relPath} must pass API-relative paths without /api/v1`,
+      );
+    }
+
+    assert.equal(
+      buildApiUrl(
+        '/admin/certificates/templates/abc/preview/png',
+        'https://api.asraacademy.in/api/v1',
+      ),
+      'https://api.asraacademy.in/api/v1/admin/certificates/templates/abc/preview/png',
+    );
+    assert.equal(
+      buildApiUrl('/student/certificates/abc/download/pdf', 'https://api.asraacademy.in/api/v1'),
+      'https://api.asraacademy.in/api/v1/student/certificates/abc/download/pdf',
+    );
   });
 });
