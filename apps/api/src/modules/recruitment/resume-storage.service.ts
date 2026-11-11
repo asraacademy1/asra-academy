@@ -4,8 +4,9 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { env } from '../../config/env.js';
-import { AppError } from '../../utils/app-error.js';
 import { logger } from '../../lib/logger.js';
+import { AppError } from '../../utils/app-error.js';
+import { cloudinarySignature } from '../assessments/media/image-store.js';
 
 export const MAX_RESUME_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -167,10 +168,19 @@ export class ResumeStorageService {
         const folder = 'asra_recruitment_resumes';
         // Cloudinary `raw` assets treat the file extension as part of `public_id`.
         const publicId = safeId;
+        // Store new applicant resumes with `private` delivery type so unauthenticated CDN URLs
+        // can never serve candidate PII directly.
+        const deliveryType = 'private';
 
-        // Generate SHA-1 signature for Cloudinary upload
-        const paramsToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
-        const signature = crypto.createHash('sha1').update(paramsToSign).digest('hex');
+        const signature = cloudinarySignature(
+          {
+            folder,
+            public_id: publicId,
+            timestamp: String(timestamp),
+            type: deliveryType,
+          },
+          apiSecret,
+        );
 
         const formData = new FormData();
         formData.append('file', new Blob([buffer], { type: 'application/pdf' }), safeOriginalName);
@@ -178,6 +188,7 @@ export class ResumeStorageService {
         formData.append('timestamp', String(timestamp));
         formData.append('folder', folder);
         formData.append('public_id', publicId);
+        formData.append('type', deliveryType);
         formData.append('signature', signature);
 
         const response = await this.fetchImpl(
@@ -254,14 +265,20 @@ export class ResumeStorageService {
   }
 
   /**
-   * Builds candidate Cloudinary delivery URLs for a stored `raw` resume asset.
+   * Builds candidate Cloudinary `public_id` values for a stored `raw` resume asset.
    * Covers both legacy uploads (where `.pdf` was stripped from `public_id`) and `.pdf`-suffixed
    * uploads, across both Fixed Folder (`folder/public_id`) and Dynamic Folder (`public_id`
    * without the folder prefix) Cloudinary environments.
    */
-  public buildCloudinaryResumeUrls(cloudName: string, assetId: string): string[] {
+  public buildCandidatePublicIds(assetId: string): string[] {
     const cleanId = assetId.trim().replace(/^\/+/, '');
-    if (!cleanId || cleanId.includes('..') || cleanId.includes('?') || cleanId.includes('#')) {
+    if (
+      !cleanId ||
+      cleanId.includes('..') ||
+      cleanId.includes('?') ||
+      cleanId.includes('#') ||
+      cleanId.includes('\\')
+    ) {
       return [];
     }
     const folderPrefix = 'asra_recruitment_resumes/';
@@ -272,20 +289,58 @@ export class ResumeStorageService {
     const pdfName = `${baseName}.pdf`;
 
     const candidatePublicIds = [
-      `asra_recruitment_resumes/${baseName}`,
-      baseName,
       `asra_recruitment_resumes/${pdfName}`,
       pdfName,
+      `asra_recruitment_resumes/${baseName}`,
+      baseName,
     ];
 
-    const seen = new Set<string>();
-    const urls: string[] = [];
-    for (const publicId of candidatePublicIds) {
-      if (seen.has(publicId)) continue;
-      seen.add(publicId);
-      urls.push(`https://res.cloudinary.com/${cloudName}/raw/upload/${publicId}`);
-    }
-    return urls;
+    return [...new Set(candidatePublicIds)];
+  }
+
+  /**
+   * Builds legacy unauthenticated CDN URLs for historical `type: 'upload'` assets.
+   * Only fetched server-side after admin authentication & RBAC checks.
+   */
+  public buildCloudinaryResumeUrls(cloudName: string, assetId: string): string[] {
+    const publicIds = this.buildCandidatePublicIds(assetId);
+    // For legacy `upload` assets, prioritize extensionless historical paths first.
+    const legacyOrdered = [
+      ...publicIds.filter((id) => !id.toLowerCase().endsWith('.pdf')),
+      ...publicIds.filter((id) => id.toLowerCase().endsWith('.pdf')),
+    ];
+    return legacyOrdered.map(
+      (publicId) => `https://res.cloudinary.com/${cloudName}/raw/upload/${publicId}`,
+    );
+  }
+
+  /**
+   * Generates a short-lived signed server-side download URL targeting Cloudinary's authenticated
+   * `/raw/download` API endpoint (`private_download_url` equivalent). Never expose this URL
+   * to the browser.
+   */
+  public buildCloudinarySignedDownloadUrl(
+    cloudName: string,
+    apiKey: string,
+    apiSecret: string,
+    publicId: string,
+    deliveryType: 'private' | 'upload' | 'authenticated',
+    nowSeconds = Math.floor(Date.now() / 1000),
+  ): string {
+    const expiresAt = nowSeconds + 300;
+    const params: Record<string, string> = {
+      expires_at: String(expiresAt),
+      public_id: publicId,
+      timestamp: String(nowSeconds),
+      type: deliveryType,
+    };
+    const signature = cloudinarySignature(params, apiSecret);
+    const query = new URLSearchParams({
+      ...params,
+      api_key: apiKey,
+      signature,
+    });
+    return `https://api.cloudinary.com/v1_1/${cloudName}/raw/download?${query.toString()}`;
   }
 
   /**
@@ -304,56 +359,129 @@ export class ResumeStorageService {
       };
     }
 
-    // Check Cloudinary if configured
+    // Check Cloudinary if configured (server-side only; credentials/URLs are never sent to clients)
     if (this.isCloudinaryConfigured()) {
       const cloudName = this.cloudinaryCloudName!.trim();
-      const candidateUrls = this.buildCloudinaryResumeUrls(cloudName, assetId);
-      let blockedStatus: number | null = null;
-      let upstreamStatus: number | null = null;
+      const apiKey = this.cloudinaryApiKey!.trim();
+      const apiSecret = this.cloudinaryApiSecret!.trim();
+      const candidatePublicIds = this.buildCandidatePublicIds(assetId);
 
-      for (const url of candidateUrls) {
-        try {
-          const res = await this.fetchImpl(url);
-          if (res.ok && res.body) {
-            const stream = Readable.fromWeb(res.body as unknown as NodeReadableStream);
-            const len = Number(res.headers.get('content-length')) || 0;
-            return {
-              stream,
-              fileSize: len,
-              originalName: assetId,
-            };
-          }
-          await res.body?.cancel().catch(() => undefined);
-          if (res.status === 401 || res.status === 403) {
-            blockedStatus = res.status;
-            logger.warn(
-              { status: res.status, xCldError: res.headers.get('x-cld-error'), url, assetId },
-              'Cloudinary denied resume delivery (check Settings -> Security -> Allow delivery of PDF and ZIP files)',
+      if (candidatePublicIds.length > 0) {
+        const legacyFirstIds = [
+          ...candidatePublicIds.filter((id) => !id.toLowerCase().endsWith('.pdf')),
+          ...candidatePublicIds.filter((id) => id.toLowerCase().endsWith('.pdf')),
+        ];
+
+        const attempts: {
+          url: string;
+          publicId: string;
+          deliveryType: 'private' | 'upload';
+          channel: 'raw_download' | 'cdn';
+        }[] = [
+          // 1. New private uploads & migrated private assets via signed `/raw/download` API
+          ...candidatePublicIds.map((publicId) => ({
+            url: this.buildCloudinarySignedDownloadUrl(
+              cloudName,
+              apiKey,
+              apiSecret,
+              publicId,
+              'private',
+            ),
+            publicId,
+            deliveryType: 'private' as const,
+            channel: 'raw_download' as const,
+          })),
+          // 2. Historical `upload` assets via signed `/raw/download` API
+          ...legacyFirstIds.map((publicId) => ({
+            url: this.buildCloudinarySignedDownloadUrl(
+              cloudName,
+              apiKey,
+              apiSecret,
+              publicId,
+              'upload',
+            ),
+            publicId,
+            deliveryType: 'upload' as const,
+            channel: 'raw_download' as const,
+          })),
+          // 3. Fallback to server-side fetch of legacy `/raw/upload` delivery URLs
+          ...legacyFirstIds.map((publicId) => ({
+            url: `https://res.cloudinary.com/${cloudName}/raw/upload/${publicId}`,
+            publicId,
+            deliveryType: 'upload' as const,
+            channel: 'cdn' as const,
+          })),
+        ];
+
+        let blockedStatus: number | null = null;
+        let upstreamStatus: number | null = null;
+
+        for (const attempt of attempts) {
+          try {
+            const res = await this.fetchImpl(attempt.url);
+            if (res.ok && res.body) {
+              const stream = Readable.fromWeb(res.body as unknown as NodeReadableStream);
+              const len = Number(res.headers.get('content-length')) || 0;
+              return {
+                stream,
+                fileSize: len,
+                originalName: assetId,
+              };
+            }
+            await res.body?.cancel().catch(() => undefined);
+            if (res.status === 401 || res.status === 403) {
+              blockedStatus = res.status;
+              logger.warn(
+                {
+                  status: res.status,
+                  xCldError: res.headers.get('x-cld-error'),
+                  publicId: attempt.publicId,
+                  deliveryType: attempt.deliveryType,
+                  channel: attempt.channel,
+                  assetId,
+                },
+                'Cloudinary denied resume delivery (check Settings -> Security -> Allow delivery of PDF and ZIP files)',
+              );
+            } else if (res.status !== 404 && res.status !== 400) {
+              upstreamStatus = res.status;
+              logger.warn(
+                {
+                  status: res.status,
+                  publicId: attempt.publicId,
+                  deliveryType: attempt.deliveryType,
+                  channel: attempt.channel,
+                  assetId,
+                },
+                'Unexpected Cloudinary status fetching resume',
+              );
+            }
+          } catch (err) {
+            upstreamStatus = 502;
+            logger.error(
+              {
+                err,
+                publicId: attempt.publicId,
+                deliveryType: attempt.deliveryType,
+                channel: attempt.channel,
+                assetId,
+              },
+              'Could not retrieve resume from Cloudinary',
             );
-          } else if (res.status !== 404) {
-            upstreamStatus = res.status;
-            logger.warn(
-              { status: res.status, url, assetId },
-              'Unexpected Cloudinary status fetching resume',
-            );
           }
-        } catch (err) {
-          upstreamStatus = 502;
-          logger.error({ err, url, assetId }, 'Could not retrieve resume from Cloudinary');
         }
-      }
 
-      if (blockedStatus !== null) {
-        throw new AppError(
-          'SERVICE_UNAVAILABLE',
-          'Resume delivery was blocked by cloud storage permissions. Verify Cloudinary PDF delivery settings.',
-        );
-      }
-      if (upstreamStatus !== null) {
-        throw new AppError(
-          'SERVICE_UNAVAILABLE',
-          'Could not retrieve resume from cloud storage. Please try again.',
-        );
+        if (blockedStatus !== null) {
+          throw new AppError(
+            'SERVICE_UNAVAILABLE',
+            'Resume delivery was blocked by cloud storage permissions. Verify Cloudinary PDF delivery settings.',
+          );
+        }
+        if (upstreamStatus !== null) {
+          throw new AppError(
+            'SERVICE_UNAVAILABLE',
+            'Could not retrieve resume from cloud storage. Please try again.',
+          );
+        }
       }
     }
 

@@ -13,6 +13,11 @@ import { CareersDirectory } from '@/components/public/careers/careers-directory'
 import { CareersWhyUs } from '@/components/public/careers/careers-why-us';
 import { DynamicQuestionInput } from '@/components/public/careers/dynamic-question-input';
 import { JobDetailView } from '@/components/public/careers/job-detail-view';
+import {
+  ApplicantResumeCard,
+  ensurePdfBlob,
+  ResumePreviewBody,
+} from '@/components/admin/recruitment/resume-actions';
 import { buildFooterColumns } from '@/components/layout/footer';
 import { footerNavigation, publicNavigation } from '@/config/navigation';
 
@@ -284,6 +289,93 @@ describe('PHASE 16: Public Careers UI & Validation', () => {
       const rendered = html(<JobDetailView job={closedJob} />);
       assert.ok(rendered.includes('Applications Closed'));
       assert.ok(rendered.includes('This position is currently not accepting new applications.'));
+    });
+  });
+
+  describe('6. Admin Applicant Resume Preview & Download UI', () => {
+    it('renders independent Preview Resume and Download Resume buttons with metadata', () => {
+      const rendered = html(
+        <ApplicantResumeCard
+          resumeOriginalName="Mohd_Arif_Ansari_Resume.pdf"
+          resumeFileSize={104858}
+          isPreviewLoading={false}
+          isDownloading={false}
+          onPreview={() => undefined}
+          onDownload={() => undefined}
+        />,
+      );
+      assert.ok(rendered.includes('Mohd_Arif_Ansari_Resume.pdf'));
+      assert.ok(rendered.includes('0.10 MB · application/pdf'));
+      assert.ok(rendered.includes('Preview Resume'));
+      assert.ok(rendered.includes('Download Resume'));
+      assert.equal(rendered.includes('Download / Preview Resume'), false);
+      assert.equal(rendered.includes('cloudinary'), false);
+    });
+
+    it('renders loading indicator independently for Download vs Preview', () => {
+      const downloadingHtml = html(
+        <ApplicantResumeCard
+          resumeOriginalName="Mohd_Arif_Ansari_Resume.pdf"
+          resumeFileSize={104858}
+          isPreviewLoading={false}
+          isDownloading={true}
+          onPreview={() => undefined}
+          onDownload={() => undefined}
+        />,
+      );
+      assert.ok(downloadingHtml.includes('Downloading…'));
+      assert.ok(downloadingHtml.includes('Preview Resume'));
+
+      const loadingBody = html(
+        <ResumePreviewBody
+          fileName="Mohd_Arif_Ansari_Resume.pdf"
+          loading={true}
+          error={null}
+          previewUrl={null}
+          onRetry={() => undefined}
+        />,
+      );
+      assert.ok(loadingBody.includes('role="status"'));
+      assert.ok(loadingBody.includes('Loading resume preview…'));
+    });
+
+    it('renders meaningful error state and retry action when preview fails', () => {
+      const errorBody = html(
+        <ResumePreviewBody
+          fileName="Mohd_Arif_Ansari_Resume.pdf"
+          loading={false}
+          error="Resume delivery was blocked by cloud storage permissions."
+          previewUrl={null}
+          onRetry={() => undefined}
+        />,
+      );
+      assert.ok(errorBody.includes('role="alert"'));
+      assert.ok(errorBody.includes('Unable to load resume preview'));
+      assert.ok(errorBody.includes('Resume delivery was blocked by cloud storage permissions.'));
+      assert.ok(errorBody.includes('Retry Preview'));
+    });
+
+    it('renders embedded PDF iframe viewer once preview blob URL loads', () => {
+      const viewerBody = html(
+        <ResumePreviewBody
+          fileName="Mohd_Arif_Ansari_Resume.pdf"
+          loading={false}
+          error={null}
+          previewUrl="blob:https://asraacademy.in/test-resume-uuid"
+          onRetry={() => undefined}
+        />,
+      );
+      assert.ok(viewerBody.includes('<iframe'));
+      assert.ok(viewerBody.includes('src="blob:https://asraacademy.in/test-resume-uuid"'));
+      assert.ok(viewerBody.includes('title="Resume preview: Mohd_Arif_Ansari_Resume.pdf"'));
+    });
+
+    it('normalizes PDF blobs and rejects empty blobs', () => {
+      assert.throws(() => ensurePdfBlob(new Blob([])), /empty/i);
+      const normalized = ensurePdfBlob(
+        new Blob(['%PDF-1.4'], { type: 'application/octet-stream' }),
+      );
+      assert.equal(normalized.type, 'application/pdf');
     });
   });
 });

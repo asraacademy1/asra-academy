@@ -92,6 +92,8 @@ describe('security headers (next.config.ts)', () => {
       'https://*.razorpay.com',
     ]);
     assert.deepEqual(csp.get('frame-src'), [
+      "'self'",
+      'blob:',
       'https://www.youtube-nocookie.com',
       'https://player.vimeo.com',
       'https://*.razorpay.com',

@@ -314,7 +314,7 @@ describe('Production Bug Regressions — Certificates & Recruitment Resumes', ()
       )) as unknown as typeof prisma.authSession.findUnique);
     stubDelegateMethod(t, prisma.jobApplication, 'findUnique', (async () => ({
       resumeAssetId: 'resume_0123456789abcdef0123456789abcdef.pdf',
-      resumeOriginalName: 'inbound2374569990595114549.pdf',
+      resumeOriginalName: 'Mohd_Arif_Ansari_Resume.pdf',
       resumeMimeType: 'application/pdf',
     })) as unknown as typeof prisma.jobApplication.findUnique);
 
@@ -338,6 +338,77 @@ describe('Production Bug Regressions — Certificates & Recruitment Resumes', ()
       storageAny.cloudinaryApiKey = 'key-123';
       storageAny.cloudinaryApiSecret = 'secret-123';
       storageAny.isProduction = true;
+
+      // 1) Private resume retrieved server-side via signed /raw/download without exposing Cloudinary URL/secrets
+      storageAny.fetchImpl = (async (input: string | URL | Request) => {
+        const parsed = new URL(String(input));
+        if (
+          parsed.origin === 'https://api.cloudinary.com' &&
+          parsed.pathname === '/v1_1/asra-prod-cloud/raw/download' &&
+          parsed.searchParams.get('type') === 'private' &&
+          parsed.searchParams.get('public_id') ===
+            'asra_recruitment_resumes/resume_0123456789abcdef0123456789abcdef.pdf'
+        ) {
+          return new Response(VALID_PDF, {
+            status: 200,
+            headers: {
+              'content-type': 'application/pdf',
+              'content-length': String(VALID_PDF.length),
+            },
+          });
+        }
+        return new Response('Not Found', { status: 404 });
+      }) as typeof fetch;
+
+      const privateOkRes = await fetch(
+        `${baseUrl}/api/v1/admin/recruitment/applications/${APPLICATION_ID}/resume`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      assert.equal(privateOkRes.status, 200);
+      assert.equal(privateOkRes.headers.get('content-type'), 'application/pdf');
+      assert.equal(
+        privateOkRes.headers.get('content-disposition'),
+        'inline; filename="Mohd_Arif_Ansari_Resume.pdf"',
+      );
+      assert.equal(privateOkRes.headers.get('cache-control'), 'private, no-cache, no-store');
+      const allHeaders = JSON.stringify([...privateOkRes.headers.entries()]);
+      assert.equal(allHeaders.includes('cloudinary'), false);
+      assert.equal(allHeaders.includes('secret-123'), false);
+      assert.equal(allHeaders.includes('key-123'), false);
+      assert.ok(Buffer.from(await privateOkRes.arrayBuffer()).equals(VALID_PDF));
+
+      // Explicit inline & attachment dispositions + validation
+      const inlineRes = await fetch(
+        `${baseUrl}/api/v1/admin/recruitment/applications/${APPLICATION_ID}/resume?disposition=inline`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      assert.equal(inlineRes.status, 200);
+      assert.equal(inlineRes.headers.get('content-type'), 'application/pdf');
+      assert.equal(
+        inlineRes.headers.get('content-disposition'),
+        'inline; filename="Mohd_Arif_Ansari_Resume.pdf"',
+      );
+      assert.ok(Buffer.from(await inlineRes.arrayBuffer()).equals(VALID_PDF));
+
+      const attachmentRes = await fetch(
+        `${baseUrl}/api/v1/admin/recruitment/applications/${APPLICATION_ID}/resume?disposition=attachment`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      assert.equal(attachmentRes.status, 200);
+      assert.equal(attachmentRes.headers.get('content-type'), 'application/pdf');
+      assert.equal(
+        attachmentRes.headers.get('content-disposition'),
+        'attachment; filename="Mohd_Arif_Ansari_Resume.pdf"',
+      );
+      assert.ok(Buffer.from(await attachmentRes.arrayBuffer()).equals(VALID_PDF));
+
+      const invalidDispositionRes = await fetch(
+        `${baseUrl}/api/v1/admin/recruitment/applications/${APPLICATION_ID}/resume?disposition=invalid`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      assert.equal(invalidDispositionRes.status, 422);
+
+      // 2) Historical `upload` asset retrieved server-side without modifying existing DB/Cloudinary records
       storageAny.fetchImpl = (async (input: string | URL | Request) => {
         const url = String(input);
         if (
@@ -360,16 +431,9 @@ describe('Production Bug Regressions — Certificates & Recruitment Resumes', ()
         { headers: { Authorization: `Bearer ${token}` } },
       );
       assert.equal(okRes.status, 200);
-      assert.equal(okRes.headers.get('content-type'), 'application/pdf');
-      assert.equal(
-        okRes.headers.get('content-disposition'),
-        'inline; filename="inbound2374569990595114549.pdf"',
-      );
-      assert.equal(okRes.headers.get('cache-control'), 'private, no-cache, no-store');
-      const bodyBuf = Buffer.from(await okRes.arrayBuffer());
-      assert.ok(bodyBuf.equals(VALID_PDF));
+      assert.ok(Buffer.from(await okRes.arrayBuffer()).equals(VALID_PDF));
 
-      // When Cloudinary blocks PDF delivery (401/403), API returns 503 rather than an inaccurate 404
+      // 3) When Cloudinary blocks PDF delivery (401/403), API returns 503 and leaks no credentials/URLs
       storageAny.fetchImpl = (async () =>
         new Response('Unauthorized', { status: 401 })) as typeof fetch;
       const blockedRes = await fetch(
@@ -377,6 +441,20 @@ describe('Production Bug Regressions — Certificates & Recruitment Resumes', ()
         { headers: { Authorization: `Bearer ${token}` } },
       );
       assert.equal(blockedRes.status, 503);
+      const blockedText = await blockedRes.text();
+      assert.equal(blockedText.includes('secret-123'), false);
+      assert.equal(blockedText.includes('key-123'), false);
+      assert.equal(blockedText.includes('res.cloudinary.com'), false);
+      assert.equal(blockedText.includes('api.cloudinary.com'), false);
+
+      // 4) When all Cloudinary endpoints return 404, API returns 404 NOT_FOUND
+      storageAny.fetchImpl = (async () =>
+        new Response('Not Found', { status: 404 })) as typeof fetch;
+      const notFoundOnCloudRes = await fetch(
+        `${baseUrl}/api/v1/admin/recruitment/applications/${APPLICATION_ID}/resume`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      assert.equal(notFoundOnCloudRes.status, 404);
     } finally {
       Object.assign(storageAny, prevStorageState);
     }

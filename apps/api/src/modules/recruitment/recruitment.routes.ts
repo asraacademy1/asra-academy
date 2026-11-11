@@ -212,6 +212,11 @@ recruitmentAdminRouter.post(
 recruitmentAdminRouter.get(
   '/recruitment/applications/:id/resume',
   manageRecruitment,
-  validateRequest({ params: z.object({ id: uuidSchema }) }),
+  validateRequest({
+    params: z.object({ id: uuidSchema }),
+    query: z.object({
+      disposition: z.enum(['inline', 'attachment']).optional(),
+    }),
+  }),
   recruitmentController.downloadResume,
 );

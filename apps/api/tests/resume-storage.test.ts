@@ -112,23 +112,84 @@ describe('ResumeStorageService — Cloudinary & Storage Enforcement', () => {
       result.assetId,
       'Cloudinary raw upload public_id must retain the .pdf extension',
     );
+    assert.equal(
+      firstCall.init.body.get('type'),
+      'private',
+      'New applicant resumes must be uploaded as private Cloudinary assets',
+    );
+    const uploadedTimestamp = String(firstCall.init.body.get('timestamp'));
+    const expectedSig = crypto
+      .createHash('sha1')
+      .update(
+        `folder=asra_recruitment_resumes&public_id=${result.assetId}&timestamp=${uploadedTimestamp}&type=private${MOCK_CREDENTIALS.cloudinaryApiSecret}`,
+      )
+      .digest('hex');
+    assert.equal(firstCall.init.body.get('signature'), expectedSig);
   });
 
-  it('resolves and streams legacy Fixed-Folder and Dynamic-Folder Cloudinary raw resumes without .pdf suffix', async () => {
+  it('retrieves private resumes via server-side signed /raw/download API and supports legacy Fixed/Dynamic Folder formats', async () => {
     const assetId = 'resume_0123456789abcdef0123456789abcdef.pdf';
     const baseName = 'resume_0123456789abcdef0123456789abcdef';
 
-    for (const matchingUrl of [
-      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/asra_recruitment_resumes/${baseName}`,
-      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/${baseName}`,
-      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/asra_recruitment_resumes/${assetId}`,
-      `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/${assetId}`,
-    ]) {
-      const seenUrls: string[] = [];
+    const matchers: {
+      label: string;
+      matches: (url: URL) => boolean;
+    }[] = [
+      {
+        label: 'private Fixed-Folder via /raw/download',
+        matches: (u) =>
+          u.origin === 'https://api.cloudinary.com' &&
+          u.pathname === `/v1_1/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/download` &&
+          u.searchParams.get('type') === 'private' &&
+          u.searchParams.get('public_id') === `asra_recruitment_resumes/${assetId}` &&
+          u.searchParams.get('api_key') === MOCK_CREDENTIALS.cloudinaryApiKey &&
+          Boolean(u.searchParams.get('signature')) &&
+          Boolean(u.searchParams.get('expires_at')),
+      },
+      {
+        label: 'private Dynamic-Folder via /raw/download',
+        matches: (u) =>
+          u.origin === 'https://api.cloudinary.com' &&
+          u.pathname === `/v1_1/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/download` &&
+          u.searchParams.get('type') === 'private' &&
+          u.searchParams.get('public_id') === assetId,
+      },
+      {
+        label: 'legacy upload extensionless Fixed-Folder via /raw/download',
+        matches: (u) =>
+          u.origin === 'https://api.cloudinary.com' &&
+          u.pathname === `/v1_1/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/download` &&
+          u.searchParams.get('type') === 'upload' &&
+          u.searchParams.get('public_id') === `asra_recruitment_resumes/${baseName}`,
+      },
+      {
+        label: 'legacy upload extensionless Dynamic-Folder via /raw/download',
+        matches: (u) =>
+          u.origin === 'https://api.cloudinary.com' &&
+          u.pathname === `/v1_1/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/download` &&
+          u.searchParams.get('type') === 'upload' &&
+          u.searchParams.get('public_id') === baseName,
+      },
+      {
+        label: 'legacy upload extensionless Fixed-Folder CDN fallback',
+        matches: (u) =>
+          u.href ===
+          `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/asra_recruitment_resumes/${baseName}`,
+      },
+      {
+        label: 'legacy upload extensionless Dynamic-Folder CDN fallback',
+        matches: (u) =>
+          u.href ===
+          `https://res.cloudinary.com/${MOCK_CREDENTIALS.cloudinaryCloudName}/raw/upload/${baseName}`,
+      },
+    ];
+
+    for (const testCase of matchers) {
+      let matched = false;
       const mockFetch = (async (input: string | URL | Request) => {
-        const url = String(input);
-        seenUrls.push(url);
-        if (url === matchingUrl) {
+        const parsed = new URL(String(input));
+        if (testCase.matches(parsed)) {
+          matched = true;
           return new Response(VALID_PDF, {
             status: 200,
             headers: {
@@ -151,9 +212,9 @@ describe('ResumeStorageService — Cloudinary & Storage Enforcement', () => {
       for await (const chunk of result.stream) {
         chunks.push(Buffer.from(chunk));
       }
-      assert.equal(Buffer.concat(chunks).toString(), VALID_PDF.toString());
-      assert.equal(result.fileSize, VALID_PDF.length);
-      assert.ok(seenUrls.includes(matchingUrl));
+      assert.equal(Buffer.concat(chunks).toString(), VALID_PDF.toString(), testCase.label);
+      assert.equal(result.fileSize, VALID_PDF.length, testCase.label);
+      assert.equal(matched, true, `Expected matcher to hit: ${testCase.label}`);
     }
   });
 
