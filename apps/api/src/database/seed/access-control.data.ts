@@ -46,6 +46,8 @@ export const PERMISSION_DEFINITIONS: Record<PermissionKey, string> = {
   [PERMISSIONS.ACADEMY_QUIZZES_MANAGE]:
     'Create and manage standalone Academy Quizzes, their questions, images and results',
   [PERMISSIONS.ACADEMY_QUIZZES_PARTICIPATE]: 'Take published Academy Quizzes',
+  [PERMISSIONS.ANNOUNCEMENTS_MANAGE]:
+    'Create, schedule, publish, pause and archive website announcements',
 };
 
 interface SystemRoleDefinition {
@@ -87,6 +89,7 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
       PERMISSIONS.CERTIFICATES_REVOKE,
       PERMISSIONS.RECRUITMENT_MANAGE,
       PERMISSIONS.ACADEMY_QUIZZES_MANAGE,
+      PERMISSIONS.ANNOUNCEMENTS_MANAGE,
       PERMISSIONS.PROFILE_MANAGE_OWN,
     ],
   },

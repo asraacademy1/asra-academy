@@ -197,6 +197,8 @@ model User {
   applicationStatusChanges  JobApplicationStatusHistory[] @relation("JobApplicationStatusChangedBy")
   interviewsCreated         JobInterview[]                @relation("JobInterviewCreatedBy")
   recruitmentCommunications JobApplicationCommunication[] @relation("JobApplicationCommunicationSentBy")
+  announcementsCreated      Announcement[]                @relation("AnnouncementCreatedBy")
+  announcementsUpdated      Announcement[]                @relation("AnnouncementUpdatedBy")
 
   @@index([status])
   /// Student-growth analytics bucket accounts by creation time (PHASE 12).
@@ -1144,6 +1146,7 @@ model AssessmentMedia {
   uploadedBy     User?                      @relation("AssessmentMediaUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
   options        AssessmentQuestionOption[]
   academyBanners AcademyQuiz[]              @relation("AcademyQuizBanner")
+  announcements  Announcement[]             @relation("AnnouncementImage")
 
   @@index([status, createdAt])
   @@index([uploadedById, createdAt])
@@ -2279,4 +2282,88 @@ model JobApplicationCommunication {
 
   @@index([applicationId, sentAt])
   @@map("job_application_communications")
+}
+
+// =============================================================================
+// Website Announcements & Popups
+// =============================================================================
+
+/// Where an active announcement renders on the site.
+enum AnnouncementDisplayType {
+  MODAL
+  TOP_BANNER
+
+  @@map("announcement_display_type")
+}
+
+/// Client-side frequency rule tracked per campaign id.
+enum AnnouncementFrequency {
+  EVERY_VISIT
+  ONCE_PER_SESSION
+  ONCE_PER_VISITOR
+
+  @@map("announcement_frequency")
+}
+
+/// Target audience segment for an announcement campaign.
+enum AnnouncementAudience {
+  ALL
+  PUBLIC_VISITORS
+  STUDENTS
+  PARENTS
+  FACULTY
+
+  @@map("announcement_audience")
+}
+
+/// Campaign lifecycle status. Time-based expiration (`endsAt <= now`) and scheduled activation
+/// (`startsAt <= now`) are enforced server-side without requiring a background worker.
+enum AnnouncementStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  PAUSED
+  EXPIRED
+  ARCHIVED
+
+  @@map("announcement_status")
+}
+
+/// Dynamic website announcement or popup campaign managed by administrators.
+model Announcement {
+  id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title               String                  @db.VarChar(160)
+  description         String?                 @db.VarChar(2000)
+  /// Optional optimized image stored in Cloudinary via the shared media ledger.
+  imageMediaId        String?                 @map("image_media_id") @db.Uuid
+  displayType         AnnouncementDisplayType @default(MODAL) @map("display_type")
+  ctaText             String?                 @map("cta_text") @db.VarChar(60)
+  redirectUrl         String?                 @map("redirect_url") @db.VarChar(2048)
+  startsAt            DateTime?               @map("starts_at") @db.Timestamptz(3)
+  endsAt              DateTime?               @map("ends_at") @db.Timestamptz(3)
+  displayDelaySeconds Int                     @default(3) @map("display_delay_seconds")
+  frequency           AnnouncementFrequency   @default(ONCE_PER_SESSION)
+  priority            Int                     @default(0)
+  audience            AnnouncementAudience    @default(ALL)
+  status              AnnouncementStatus      @default(DRAFT)
+  publishedAt         DateTime?               @map("published_at") @db.Timestamptz(3)
+  pausedAt            DateTime?               @map("paused_at") @db.Timestamptz(3)
+  archivedAt          DateTime?               @map("archived_at") @db.Timestamptz(3)
+  createdById         String?                 @map("created_by_id") @db.Uuid
+  updatedById         String?                 @map("updated_by_id") @db.Uuid
+  createdAt           DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  imageMedia AssessmentMedia? @relation("AnnouncementImage", fields: [imageMediaId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy  User?            @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  updatedBy  User?            @relation("AnnouncementUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([status, priority, publishedAt])
+  @@index([status, startsAt, endsAt])
+  @@index([audience, status])
+  @@index([displayType, status])
+  @@index([imageMediaId])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("announcements")
 }

@@ -1,8 +1,12 @@
 import { PERMISSIONS } from '@asra/types';
 import { Router } from 'express';
 import { authenticate } from '../middleware/authenticate.js';
-import { requirePermission } from '../middleware/authorize.js';
+import { requireAnyPermission } from '../middleware/authorize.js';
 import { assessmentMediaRouter } from '../modules/assessments/media/media.routes.js';
+import {
+  announcementsAdminRouter,
+  publicAnnouncementsRouter,
+} from '../modules/announcements/announcements.routes.js';
 import { academicsAdminRouter } from '../modules/academics/academics.routes.js';
 import { academyQuizzesAdminRouter } from '../modules/academy-quizzes/academy-quizzes.routes.js';
 import {
@@ -54,6 +58,9 @@ apiRouter.use('/certificates', publicCertificatesRouter);
 /** Public careers & job applications (PHASE 16). */
 apiRouter.use('/careers', publicCareersRouter);
 
+/** Public active announcements & popups (eligible published campaigns only). */
+apiRouter.use('/announcements', publicAnnouncementsRouter);
+
 /**
  * Administration (PHASE 06). Every request is authenticated here; each route then requires its
  * own permission (`academic_structure.manage`, `courses.manage` or `content.manage`), and the
@@ -80,8 +87,14 @@ adminRouter.use(certificatesAdminRouter);
 adminRouter.use(recruitmentAdminRouter);
 // Academy Quizzes administration (standalone quizzes): `academy_quizzes.manage` on every route.
 adminRouter.use(academyQuizzesAdminRouter);
-// Academy Quiz images (shared media service; same handler as /faculty): `academy_quizzes.manage`.
-adminRouter.use(assessmentMediaRouter(requirePermission(PERMISSIONS.ACADEMY_QUIZZES_MANAGE)));
+// Website announcements administration: `announcements.manage` on every route.
+adminRouter.use(announcementsAdminRouter);
+// Shared admin image upload (Cloudinary media ledger): quiz or announcement managers.
+adminRouter.use(
+  assessmentMediaRouter(
+    requireAnyPermission(PERMISSIONS.ACADEMY_QUIZZES_MANAGE, PERMISSIONS.ANNOUNCEMENTS_MANAGE),
+  ),
+);
 apiRouter.use('/admin', adminRouter);
 
 /** In-app notifications of the signed-in user, any role (PHASE 11). */

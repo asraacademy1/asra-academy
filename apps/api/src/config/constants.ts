@@ -18,6 +18,7 @@ export const DEPENDENCY_CHECK_TIMEOUT_MS = 2_000;
  */
 export const PUBLIC_CATALOGUE_CACHE_CONTROL =
   'public, max-age=0, s-maxage=60, stale-while-revalidate=60';
+export const PUBLIC_ANNOUNCEMENT_CACHE_CONTROL = 'public, max-age=0, must-revalidate';
 export const SITEMAP_FEED_CACHE_CONTROL =
   'public, max-age=0, s-maxage=300, stale-while-revalidate=300';
 
