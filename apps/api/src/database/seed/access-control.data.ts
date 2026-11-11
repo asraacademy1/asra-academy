@@ -32,7 +32,15 @@ export const PERMISSION_DEFINITIONS: Record<PermissionKey, string> = {
   [PERMISSIONS.NOTIFICATIONS_VIEW]: 'Inspect notification and email delivery activity',
   [PERMISSIONS.AUDIT_LOGS_VIEW]: 'Read the administrative, payment and assessment audit logs',
   [PERMISSIONS.CERTIFICATES_VIEW]: 'View certificates and public verification records',
-  [PERMISSIONS.CERTIFICATES_MANAGE]: 'Manage certificates, generate and revoke certificates',
+  [PERMISSIONS.CERTIFICATES_MANAGE]:
+    'Manage certificates, settings, and global certificate administration',
+  [PERMISSIONS.CERTIFICATES_TEMPLATES_MANAGE]:
+    'Configure certificate templates and template signature layouts',
+  [PERMISSIONS.CERTIFICATES_SIGNATURES_MANAGE]:
+    'Upload, replace, activate and deactivate digital signatures',
+  [PERMISSIONS.CERTIFICATES_ISSUE]:
+    'Issue and reissue certificates across platform modules and manually',
+  [PERMISSIONS.CERTIFICATES_REVOKE]: 'Revoke issued certificates with audit reason',
   [PERMISSIONS.RECRUITMENT_MANAGE]:
     'Manage recruitment, job postings, applications, interviews, and candidate communications',
   [PERMISSIONS.ACADEMY_QUIZZES_MANAGE]:
@@ -73,6 +81,10 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
       PERMISSIONS.NOTIFICATIONS_VIEW,
       PERMISSIONS.CERTIFICATES_VIEW,
       PERMISSIONS.CERTIFICATES_MANAGE,
+      PERMISSIONS.CERTIFICATES_TEMPLATES_MANAGE,
+      PERMISSIONS.CERTIFICATES_SIGNATURES_MANAGE,
+      PERMISSIONS.CERTIFICATES_ISSUE,
+      PERMISSIONS.CERTIFICATES_REVOKE,
       PERMISSIONS.RECRUITMENT_MANAGE,
       PERMISSIONS.ACADEMY_QUIZZES_MANAGE,
       PERMISSIONS.PROFILE_MANAGE_OWN,

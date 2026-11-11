@@ -59,8 +59,16 @@ export const PERMISSIONS = {
   AUDIT_LOGS_VIEW: 'audit_logs.view',
   /** View certificates and public verification records (PHASE 13). */
   CERTIFICATES_VIEW: 'certificates.view',
-  /** Manage certificates, generate and revoke certificates (PHASE 13). */
+  /** Manage certificates, settings, and global certificate administration (PHASE 13+). */
   CERTIFICATES_MANAGE: 'certificates.manage',
+  /** Manage certificate templates and template configurations. */
+  CERTIFICATES_TEMPLATES_MANAGE: 'certificates.templates.manage',
+  /** Upload, replace, activate/deactivate and manage digital signatures. */
+  CERTIFICATES_SIGNATURES_MANAGE: 'certificates.signatures.manage',
+  /** Issue and reissue certificates manually or across platform sources. */
+  CERTIFICATES_ISSUE: 'certificates.issue',
+  /** Revoke issued certificates. */
+  CERTIFICATES_REVOKE: 'certificates.revoke',
   /** Manage recruitment, job postings, applications, interviews, and candidate communications. */
   RECRUITMENT_MANAGE: 'recruitment.manage',
   /** Create and run standalone Academy Quizzes (questions, images, schedule, results). */

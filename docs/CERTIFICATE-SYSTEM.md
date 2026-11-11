@@ -1,165 +1,111 @@
-# ASRA Academy — Certificate System (Phase 13)
+# ASRA Academy — Certificate Management System (Phase 13 + Phase 17 Upgrade)
 
-| Field   | Value                                                                                            |
-| ------- | ------------------------------------------------------------------------------------------------ |
-| Version | 1.0.0                                                                                            |
-| Status  | Phase 13 — Complete Production Implementation                                                    |
-| Scope   | Certificate lifecycle, eligibility engine, PDF generation, public verification, admin management |
-
----
-
-## 1. Overview & Lifecycle
-
-The Certificate System provides durable, verifiable credentials awarded to learners upon satisfying all academic and curriculum requirements of an enrolled course.
-
-```
-       Course Completion (Lessons 100%)
-                     ↓
-       Assessment Checks (Exams Passed)
-                     ↓
-             Eligibility Engine
-                     ↓
-            Certificate Issued
-                     ↓
-       Cryptographic Unique Identifier
-          (e.g. ASRA-2026-F9KC-M28V)
-                     ↓
-      ┌──────────────┴──────────────┐
-      ▼                             ▼
-Student PDF Download      Public Verification
- (Landscape A4 Branded)   (/verify/:certificateNumber)
-```
+| Field   | Value                                                                                                                    |
+| ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Version | 2.0.0 (Phase 17 Generic Certificate Management Module)                                                                   |
+| Status  | Complete Production Architecture — Backward-Compatible Upgrade                                                           |
+| Scope   | Centralized issuance engine, 3 reusable PDF templates, digital signature management, student gallery, verification, RBAC |
 
 ---
 
-## 2. Eligibility Engine
+## 1. Overview & Architecture
 
-Eligibility is calculated strictly server-side by `certificatesService.checkEligibility(auth, courseId)`. The client is never trusted to assert completion or supply completion dates.
+ASRA Academy's Certificate Management Module provides a single centralized engine for issuing, managing, verifying, and downloading official verifiable credentials across the entire platform:
 
-### Requirements Evaluated
+- **Supported Sources (`CertificateSourceType`)**: `COURSE`, `ACADEMY_QUIZ`, `COMPETITION`, `EXAM`, `EVENT`, `WORKSHOP`, `TRAINING`, `MANUAL`, `CUSTOM`.
+- **Admin Control Center (`/admin/certificates`)**:
+  - Overview Dashboard (`/admin/certificates`)
+  - Certificate Templates (`/admin/certificates/templates`)
+  - Digital Signatures (`/admin/certificates/signatures`)
+  - Issued Certificates Registry (`/admin/certificates/issued`)
+  - Manual Certificate Generation (`/admin/certificates/generate`)
+  - Verification & Settings (`/admin/certificates/settings`)
+- **Backward Compatibility**: All Phase 13 course completion eligibility logic, `ASRA-YYYY-XXXX-XXXX` identifiers, existing certificate rows, and `/verify/:certificateNumber` routes remain intact.
 
-1. **Authentication & Identity**: Requestor must be an active student account (`status === 'ACTIVE'`).
-2. **Active Enrolment**: An `ACTIVE` enrolment row must exist for `(userId, courseId)`. Cancelled enrolments are disqualified (`ENROLLMENT_INACTIVE`).
-3. **Curriculum Completion**:
-   - Evaluated against authoritative progress rules: `enrollment.completedAt !== null` or `isCourseComplete(progress)`.
-   - `isCourseComplete`: `progress.totalLessons > 0 && progress.completedLessons === progress.totalLessons`.
-   - Counting lessons exclude non-interactive placeholders (per `countsTowardProgress`).
-4. **Assessment / Examination Requirements**:
-   - If the course has published examinations (`status === 'PUBLISHED'`), the student must have completed and passed each published examination (`passed === true`).
-   - If an examination attempt is currently submitted and waiting for manual teacher grading (`evaluationStatus === 'PENDING'`), eligibility is held with code `EXAM_PENDING_GRADING`.
-   - Courses without published examinations require only 100% curriculum completion.
-5. **Idempotent Already-Issued Handling**:
-   - If a certificate has already been issued for this enrolment, the engine reports state `ALREADY_ISSUED` and returns the existing certificate details safely.
+```
+   COURSE / ACADEMY_QUIZ / COMPETITION / EXAM / EVENT / WORKSHOP / TRAINING / MANUAL / CUSTOM
+                                              │
+                                              ▼
+                       CertificateService.issueGenericCertificate({...})
+                      (Eligibility + Idempotency + Unique ID + Snapshots)
+                                              │
+                   ┌──────────────────────────┴──────────────────────────┐
+                   ▼                                                     ▼
+   PostgreSQL Structured Data Only                              Verification Record
+  (No generated PDF/PNG persisted or cached)                   /verify/:certificateNumber
+                   │
+                   ▼ (On-Demand Dynamic Rendering in Memory)
+    Live React Preview · Sharp PNG (1684×1190) · PDFKit A4 PDF
+```
 
 ---
 
-## 3. Certificate Identifier Format & Uniqueness
+## 2. Three Initial Certificate Templates
 
-Public certificate identifiers use the format:
+All three templates render server-side as printable **Landscape A4 (`841.89 × 595.28` pt)** PDFs via `pdfkit` (`apps/api/src/modules/certificates/pdf.service.ts`) with dynamic long-name sizing, vector QR codes (`qrcode`), academy branding, and 2–4 positioned digital signatures, paired with matching live React previews (`apps/web/src/components/certificates/certificate-preview.tsx`):
 
-```
-ASRA-YYYY-XXXX-XXXX
-```
-
-- `YYYY`: 4-digit Gregorian issuance year (e.g. `2026`).
-- `XXXX-XXXX`: 8 characters drawn uniformly (`crypto.randomInt`) from a 30-symbol alphabet (`23456789ABCDEFGHJKMNPQRSTVWXYZ`), omitting ambiguous characters `0`, `O`, `1`, `I`, `L`, `U`.
-- Entropy: ≈39 bits of cryptographic randomness (30^8 ≈ 6.6 × 10^11 numbers per calendar year). _(Corrected in PHASE 14: previously documented as 40 bits / Base32, and drawn with a slight modulo bias.)_
-- Constraint: Enforced in PostgreSQL via CHECK constraint `certificates_certificate_number_format` and UNIQUE index `certificates_certificate_number_key`.
-- Collision handling: a drawn number is checked for existence before the insert, with up to 5 draws. (A unique violation cannot be retried inside the issuing transaction — PostgreSQL aborts it.)
-- One-per-enrolment guarantee: Enforced at the database level via UNIQUE constraint `certificates_enrollment_id_key`. Concurrent claims (double click, two tabs) are serialised by locking the enrolment row (`SELECT … FOR UPDATE`) at the start of issuance, so every request returns the same certificate (PHASE 14, `certificates.test.ts`).
+1. **Classic / Institutional (`CLASSIC_INSTITUTIONAL`)**: Ivory background, triple forest-green & gold academic borders, corner diamond flourishes, circular academy seal, traditional formal typography. Suitable for courses, diplomas, and training programs.
+2. **Modern / Minimal (`MODERN_MINIMAL`)**: Crisp high-whitespace studio card layout with vertical accent stripe, structured metadata grid, top-right verification QR badge, and sleek underline signatures. Suitable for coding competitions, technical quizzes, and workshops.
+3. **Premium / Achievement (`PREMIUM_ACHIEVEMENT`)**: Deep-emerald & champagne-gold ceremonial header ribbon, crest medallion, distinction achievement callout box, and editorial honor presentation. Suitable for excellence awards, Olympiad top performers, and special recognitions.
 
 ---
 
-## 4. PDF Generation & Styling
+## 3. Digital Signatures & Selection Rules
 
-Generated server-side using `pdfkit` in Landscape A4 format (`841.89 × 595.28` pt):
-
-- **Brand Palette**:
-  - Deep Forest Green: `#012114`
-  - Emerald Green: `#034729`
-  - Academy Gold: `#C88717` / `#D89E34`
-  - Ivory / Warm Cream Background: `#FDFBF7`
-- **Visual Elements**:
-  - Triple nested border with gold corner diamond flourishes.
-  - Centered ASRA Academy emblem (or typographic wordmark header).
-  - Title: "CERTIFICATE OF COMPLETION".
-  - Recipient's frozen full name with elegant gold underline.
-  - Course title snapshot.
-  - Completion date and issuance date formatted in UTC.
-  - Official Academy circular seal graphic.
-  - Authorized signatory line: "Academic Director, ASRA Academy".
-  - Bottom bar featuring Certificate ID and direct public verification URL (`/verify/:certificateNumber`).
+- **Free-Text Official Designations**: Designations (Founder, Director, Academic Director, Principal, Examination Controller, Custom…) are never hardcoded. Multiple people holding similar titles remain uniquely identifiable by record ID, full name, and optional department.
+- **Image Validation**: Uploads (`multipart/form-data` or base64 PNG) are inspected byte-for-byte via `validateSignaturePng`: strict PNG magic bytes + `IHDR` dimensions (`40×20` to `2400×1200`), size limit (`512 KB`), APNG (`acTL`) rejection, and alpha/tRNS transparency detection.
+- **Original Preservation & Subtle Render Enhancement**: Uploaded original signature PNG binaries remain unmodified in Cloudinary in production (never generated certificate PDFs/PNGs/QRs). At render time, React Preview, SVG/Sharp PNG (`png.service.ts`), and PDFKit (`pdf.service.ts`) fetch required signature PNGs and render certificates dynamically in memory without storing output files.
+- **Selection Rules**: Templates and manual certificates require **2 to 4** unique, **active** signatures (`sortOrder` unique, custom position labels, per-slot `showName` & `showDesignation` toggles).
+- **Historical Snapshot Integrity**: Both `templateSnapshot` and `signatureSnapshots` are frozen in PostgreSQL on the issued `Certificate` row (data-only). Later editing, replacing, or deactivating a template or signature never alters previously issued certificates. If an active credential is revoked or reissued (`SUPERSEDED`), subsequent previews, dynamic PNG/PDF exports, and public verification immediately reflect the live status.
 
 ---
 
-## 5. Public Verification & Privacy Guarantees
+## 4. Eligibility & Generic Issuance
 
-Public verification is available at:
-
-```
-GET /api/v1/certificates/verify/:certificateNumber
-```
-
-and via the public web page `/verify/:certificateNumber`.
-
-PHASE 14: the web page calls the API through `apps/web/src/lib/certificates.ts` (the earlier direct `fetch` doubled the `/api/v1` prefix and always reported "not found"). Individual verification pages are `noindex`, and their title/description never contain the recipient's name or course; an API outage is shown as "Verification unavailable", never as "not found". Responses are `Cache-Control: no-store`, so a revocation is visible immediately.
-
-### Privacy Boundaries
-
-To protect learner privacy in compliance with data protection principles:
-
-- **Exposed fields**: `valid`, `certificateNumber`, `status` (`ISSUED` or `REVOKED`), `recipientName`, `courseTitle`, `academyName`, `completedAt`, `issuedAt`, `revokedAt`, and `revokedReason`.
-- **Strictly omitted**: Student email address, internal database UUIDs, user phone number, assessment scores, and payment details.
-- **Rate limiting**: Protected by per-IP rate limiting (`CERTIFICATE_RATE_LIMITS.verify`: 60 requests/minute) to prevent automated harvesting.
+- **Courses (`COURSE`)**: Existing `certificatesService.checkEligibility` enforces `ACTIVE` enrolment, 100% curriculum completion, and passing grades on published course examinations. Automatic issuance on course completion respects `CertificateSettings.autoIssueOnCourseCompletion`.
+- **Academy Quizzes (`ACADEMY_QUIZ`)**: Enforces released results and a finalized `EVALUATED` passing attempt (`POST /api/v1/student/academy-quizzes/:id/certificate`), with idempotency key `ACADEMY_QUIZ:{quizId}:{userId}`.
+- **Manual & Generic Issuance (`POST /api/v1/admin/certificates/manual`, `/issue`)**:
+  - **Option A — Existing Student**: Search by student name, email, or `studentCode` and bind `userId`, making the credential immediately visible in `/student/certificates`.
+  - **Option B — Manual External Recipient**: Issue to an external recipient without requiring a platform account (`userId = null`) while retaining PDF download and public `/verify/:certificateNumber`.
+- **Reissue & Revocation**: Active certificates can be superseded cleanly (`POST /api/v1/admin/certificates/:id/reissue` linking `reissuedFromId`) or revoked with a mandatory audit reason (`POST /api/v1/admin/certificates/:id/revoke`).
 
 ---
 
-## 6. Administration & Revocation
+## 5. Certificate Identifier Format & Privacy
 
-Administrators with `certificates.view` permission can list, filter, search, and download certificates across all courses via:
-
-```
-GET /api/v1/admin/certificates
-GET /api/v1/admin/certificates/:id
-GET /api/v1/admin/certificates/:id/download
-```
-
-Administrators with `certificates.manage` permission can revoke credentials:
-
-```
-POST /api/v1/admin/certificates/:id/revoke
-Body: { "reason": "Mandatory justification string (min 3 chars)" }
-```
-
-- Sets `status = 'REVOKED'`, records `revoked_at` timestamp and `revoked_reason`.
-- Immediately reflects on the public verification page with a red warning notice.
-- Automatically writes an immutable entry to `admin_audit_logs` (`action: "certificate.revoked_by_admin"`).
+- Public identifier format: `ASRA-YYYY-XXXX-XXXX` (`ASRA-[0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}` checked in PostgreSQL using 30 unambiguous symbols drawn via `crypto.randomInt`).
+- Public verification (`GET /api/v1/certificates/verify/:certificateNumber` & `/verify/:certificateNumber`) returns `valid`, `certificateNumber`, `status`, `sourceType`, `sourceLabel`, `certificateTitle`, `recipientName`, `courseTitle`, `description`, `achievementDetails`, `academyName`, `completedAt`, `issuedAt`, `revokedAt`, `revokedReason`, and public `signatories: { fullName, designation, department }[]`.
+- Student emails, internal UUIDs, `studentCode` values, payment records, and numeric scores are never exposed on public verification pages, and pages emit `noindex` metadata free of recipient names.
 
 ---
 
-## 7. API Reference
+## 6. Granular RBAC Permissions
 
-### Student Endpoints (require `STUDENT` role + `content.view_enrolled`)
+Granted to `ADMIN` and `SUPER_ADMIN` only (never `FACULTY` or `STUDENT`):
 
-| Method | Path                                                  | Description                         |
-| ------ | ----------------------------------------------------- | ----------------------------------- |
-| `GET`  | `/api/v1/student/certificates`                        | List student's earned certificates  |
-| `GET`  | `/api/v1/student/certificates/:id`                    | Get single certificate details      |
-| `GET`  | `/api/v1/student/certificates/:id/download`           | Download PDF certificate            |
-| `GET`  | `/api/v1/student/courses/:id/certificate/eligibility` | Check course completion eligibility |
-| `POST` | `/api/v1/student/courses/:id/certificate`             | Claim / issue certificate           |
+- `certificates.view` — Read overview KPIs, templates, active/archived signatures, issued certificates, audit logs, settings, and download PDFs.
+- `certificates.templates.manage` — Configure templates, colors/layout flags, and 2–4 template signatures.
+- `certificates.signatures.manage` — Upload, replace, edit, activate, or deactivate digital signatures.
+- `certificates.issue` — Issue generic/manual certificates and reissue existing certificates.
+- `certificates.revoke` — Revoke issued certificates with mandatory audit reason.
+- `certificates.manage` — Full administrative authority including global settings (`PATCH /api/v1/admin/certificates/settings`) plus all sub-capabilities above.
 
-### Public Endpoints (no auth required)
+---
 
-| Method | Path                                             | Description                             |
-| ------ | ------------------------------------------------ | --------------------------------------- |
-| `GET`  | `/api/v1/certificates/verify/:certificateNumber` | Verify credential validity and metadata |
+## 7. API Reference Summary
 
-### Admin Endpoints (require `ADMIN` or `SUPER_ADMIN`)
+### Student & Public Routes
 
-| Method | Path                                      | Permission            | Description                    |
-| ------ | ----------------------------------------- | --------------------- | ------------------------------ |
-| `GET`  | `/api/v1/admin/certificates`              | `certificates.view`   | Paginated search and listing   |
-| `GET`  | `/api/v1/admin/certificates/:id`          | `certificates.view`   | Certificate details            |
-| `GET`  | `/api/v1/admin/certificates/:id/download` | `certificates.view`   | Download certificate PDF       |
-| `POST` | `/api/v1/admin/certificates/:id/revoke`   | `certificates.manage` | Revoke certificate with reason |
+- `GET /api/v1/certificates/verify/:certificateNumber` (public, rate-limited, `Cache-Control: no-store`)
+- `GET /api/v1/student/certificates` (supports `?sourceType=` & `?search=`)
+- `GET /api/v1/student/certificates/:id`, `/download` (`?format=pdf|png`), `/download/pdf`, and `/download/png`
+- `GET /api/v1/student/courses/:id/certificate/eligibility` & `POST /api/v1/student/courses/:id/certificate`
+- `POST /api/v1/student/academy-quizzes/:id/certificate`
+
+### Admin Routes (`/api/v1/admin/certificates/*`)
+
+- `GET /overview`, `GET/PATCH /settings`, `GET /audit-logs`, `GET /students/search`, `GET /sources`
+- `GET /templates`, `GET /templates/:id`, `PATCH /templates/:id`, `GET /templates/:id/preview` (`?format=pdf|png`), `GET /templates/:id/preview/png`
+- `GET /signatures`, `GET /signatures/active`, `GET /signatures/:id`, `POST /signatures`, `PATCH /signatures/:id`
+- `POST /manual`, `POST /issue`
+- `GET /`, `GET /:id`, `GET /:id/download` (`?format=pdf|png`), `GET /:id/download/pdf`, `GET /:id/download/png`, `POST /:id/reissue`, `POST /:id/revoke`

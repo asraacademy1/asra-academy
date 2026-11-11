@@ -205,7 +205,15 @@ async function recordLearningAction(
   });
 
   if (result.newlyCompleted) {
-    void certificatesService.issueCertificate(auth, result.courseId).catch(() => {});
+    void prisma.certificateSettings
+      .findUnique({ where: { id: 'default' }, select: { autoIssueOnCourseCompletion: true } })
+      .then((settings) => {
+        if (settings?.autoIssueOnCourseCompletion !== false) {
+          return certificatesService.issueCertificate(auth, result.courseId);
+        }
+        return undefined;
+      })
+      .catch(() => {});
   }
 
   return { lessonId: result.lessonId, progress: result.progress, course: result.course };

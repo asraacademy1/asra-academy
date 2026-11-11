@@ -173,7 +173,37 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: '/admin/live-classes', allOf: [PERMISSIONS.LIVE_CLASSES_MANAGE] },
   { prefix: '/admin/assessments', allOf: [PERMISSIONS.CONTENT_MANAGE] },
   { prefix: '/admin/academy-quizzes', allOf: [PERMISSIONS.ACADEMY_QUIZZES_MANAGE] },
-  { prefix: '/admin/certificates', allOf: [PERMISSIONS.CERTIFICATES_VIEW] },
+  {
+    prefix: '/admin/certificates',
+    anyOf: [
+      PERMISSIONS.CERTIFICATES_VIEW,
+      PERMISSIONS.CERTIFICATES_MANAGE,
+      PERMISSIONS.CERTIFICATES_TEMPLATES_MANAGE,
+      PERMISSIONS.CERTIFICATES_SIGNATURES_MANAGE,
+      PERMISSIONS.CERTIFICATES_ISSUE,
+      PERMISSIONS.CERTIFICATES_REVOKE,
+    ],
+  },
+  {
+    prefix: '/admin/certificates/generate',
+    anyOf: [PERMISSIONS.CERTIFICATES_ISSUE, PERMISSIONS.CERTIFICATES_MANAGE],
+  },
+  {
+    prefix: '/admin/certificates/templates',
+    anyOf: [
+      PERMISSIONS.CERTIFICATES_VIEW,
+      PERMISSIONS.CERTIFICATES_TEMPLATES_MANAGE,
+      PERMISSIONS.CERTIFICATES_MANAGE,
+    ],
+  },
+  {
+    prefix: '/admin/certificates/signatures',
+    anyOf: [
+      PERMISSIONS.CERTIFICATES_VIEW,
+      PERMISSIONS.CERTIFICATES_SIGNATURES_MANAGE,
+      PERMISSIONS.CERTIFICATES_MANAGE,
+    ],
+  },
   { prefix: '/admin/payments', allOf: [PERMISSIONS.PAYMENTS_VIEW] },
   { prefix: '/admin/enrollments', allOf: [PERMISSIONS.ENROLLMENTS_MANAGE] },
   { prefix: '/admin/email-deliveries', allOf: [PERMISSIONS.NOTIFICATIONS_VIEW] },
@@ -286,7 +316,12 @@ export function buildNavigation(can: (permission: string) => boolean): NavGroup[
       href: '/admin/academy-quizzes',
       icon: <Trophy />,
     },
-    can(PERMISSIONS.CERTIFICATES_VIEW) && {
+    (can(PERMISSIONS.CERTIFICATES_VIEW) ||
+      can(PERMISSIONS.CERTIFICATES_MANAGE) ||
+      can(PERMISSIONS.CERTIFICATES_TEMPLATES_MANAGE) ||
+      can(PERMISSIONS.CERTIFICATES_SIGNATURES_MANAGE) ||
+      can(PERMISSIONS.CERTIFICATES_ISSUE) ||
+      can(PERMISSIONS.CERTIFICATES_REVOKE)) && {
       label: 'Certificates',
       href: '/admin/certificates',
       icon: <Award />,

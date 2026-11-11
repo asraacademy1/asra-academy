@@ -17,6 +17,17 @@ export type CertificateLookup =
 
 const VERIFY_TIMEOUT_MS = 5_000;
 
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.URL.revokeObjectURL(objectUrl);
+}
+
 /** Normalises user input the same way the API validates it; `null` when it cannot be an id. */
 export function normaliseCertificateNumber(value: string): string | null {
   const parsed = certificateVerifyParamsSchema.safeParse({

@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { CertificatesAdmin } from '@/components/admin/certificates-admin';
+import { CertificatesOverview } from '@/components/admin/certificates/certificates-overview';
 
-export const metadata: Metadata = { title: 'Certificates' };
+export const metadata: Metadata = { title: 'Certificate Management' };
 
 export default function CertificatesAdminPage() {
-  return <CertificatesAdmin />;
+  return <CertificatesOverview />;
 }

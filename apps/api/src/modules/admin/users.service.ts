@@ -211,6 +211,15 @@ export const usersService = {
           { fullName: { contains: query.q, mode: 'insensitive' } },
           { email: { contains: query.q, mode: 'insensitive' } },
           { phone: { contains: query.q } },
+          ...(query.role === 'STUDENT'
+            ? [
+                {
+                  studentProfile: {
+                    studentCode: { contains: query.q, mode: 'insensitive' as const },
+                  },
+                },
+              ]
+            : []),
         ],
       });
     }

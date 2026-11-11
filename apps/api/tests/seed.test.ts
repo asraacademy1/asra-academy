@@ -7,6 +7,7 @@ import {
   SEED_TRANSACTION_OPTIONS,
   seedAccessControl,
 } from '../src/database/seed/access-control.seed.js';
+import { seedCertificateDefaults } from '../src/modules/certificates/bootstrap.js';
 
 type TransactionArgs = Parameters<typeof prisma.$transaction>;
 
@@ -133,5 +134,48 @@ describe('access-control seed', () => {
 
     await seedAccessControl(prisma);
     assert.equal((await snapshot()).roles, SYSTEM_ROLES.length);
+  });
+});
+
+describe('certificate defaults seed', () => {
+  it('initializes the 3 default templates and singleton settings idempotently without demo certificates or users', async () => {
+    await prisma.certificateSettings.deleteMany();
+    await prisma.certificateTemplateSignature.deleteMany();
+    await prisma.certificateTemplate.deleteMany();
+
+    const usersBefore = await prisma.user.count();
+    const certsBefore = await prisma.certificate.count();
+    const sigsBefore = await prisma.certificateSignature.count();
+
+    const first = await seedCertificateDefaults(prisma);
+    assert.equal(first.templates, 3);
+    assert.equal(first.settingsReady, true);
+
+    // Customize one template & settings to verify repeat seed never overwrites production edits
+    await prisma.certificateTemplate.update({
+      where: { key: 'classic-institutional' },
+      data: { defaultTitle: 'CUSTOM ACADEMY TITLE' },
+    });
+    await prisma.certificateSettings.update({
+      where: { id: 'default' },
+      data: { academyName: 'ASRA Custom Production Title' },
+    });
+
+    const second = await seedCertificateDefaults(prisma);
+    assert.equal(second.templates, 3);
+    assert.equal(second.settingsReady, true);
+
+    const classic = await prisma.certificateTemplate.findUniqueOrThrow({
+      where: { key: 'classic-institutional' },
+    });
+    const settings = await prisma.certificateSettings.findUniqueOrThrow({
+      where: { id: 'default' },
+    });
+    assert.equal(classic.defaultTitle, 'CUSTOM ACADEMY TITLE');
+    assert.equal(settings.academyName, 'ASRA Custom Production Title');
+
+    assert.equal(await prisma.user.count(), usersBefore);
+    assert.equal(await prisma.certificate.count(), certsBefore);
+    assert.equal(await prisma.certificateSignature.count(), sigsBefore);
   });
 });

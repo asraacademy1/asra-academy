@@ -30,6 +30,10 @@ const ADMIN_GRANTS = [
   PERMISSIONS.NOTIFICATIONS_VIEW,
   PERMISSIONS.CERTIFICATES_VIEW,
   PERMISSIONS.CERTIFICATES_MANAGE,
+  PERMISSIONS.CERTIFICATES_TEMPLATES_MANAGE,
+  PERMISSIONS.CERTIFICATES_SIGNATURES_MANAGE,
+  PERMISSIONS.CERTIFICATES_ISSUE,
+  PERMISSIONS.CERTIFICATES_REVOKE,
   PERMISSIONS.RECRUITMENT_MANAGE,
   PERMISSIONS.ACADEMY_QUIZZES_MANAGE,
   PERMISSIONS.PROFILE_MANAGE_OWN,
@@ -128,6 +132,12 @@ describe('direct URL access', () => {
       '/admin/users/3f0c',
       '/admin/courses/new',
       '/admin/courses/3f0c',
+      '/admin/certificates',
+      '/admin/certificates/templates',
+      '/admin/certificates/signatures',
+      '/admin/certificates/issued',
+      '/admin/certificates/generate',
+      '/admin/certificates/settings',
       '/admin/payments/orders/3f0c',
       '/admin/recruitment/jobs/3f0c/edit',
       '/admin/analytics/revenue',
@@ -141,8 +151,20 @@ describe('direct URL access', () => {
     assert.equal(pathAllowed(analyst, '/admin/analytics'), true);
     assert.equal(pathAllowed(analyst, '/admin/analytics/revenue'), false);
     assert.equal(pathAllowed(analyst, '/admin/courses'), false);
+    assert.equal(pathAllowed(analyst, '/admin/certificates'), false);
     // `/admin/rolesX` is not under `/admin/roles`.
     assert.equal(pathAllowed(admin, '/admin/rolesX'), true);
+
+    const certViewer = account([], [PERMISSIONS.CERTIFICATES_VIEW]);
+    assert.equal(pathAllowed(certViewer, '/admin/certificates'), true);
+    assert.equal(pathAllowed(certViewer, '/admin/certificates/templates'), true);
+    assert.equal(pathAllowed(certViewer, '/admin/certificates/signatures'), true);
+    assert.equal(pathAllowed(certViewer, '/admin/certificates/generate'), false);
+    assert.ok(navHrefs(certViewer).includes('/admin/certificates'));
+
+    const certIssuer = account([], [PERMISSIONS.CERTIFICATES_ISSUE]);
+    assert.equal(pathAllowed(certIssuer, '/admin/certificates/generate'), true);
+    assert.ok(navHrefs(certIssuer).includes('/admin/certificates'));
   });
 
   it('every rule names known permission keys', () => {

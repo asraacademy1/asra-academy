@@ -1,6 +1,7 @@
 'use client';
 
-import type { PublicCertificateVerificationDto } from '@asra/types';
+import type { CertificateSourceType, PublicCertificateVerificationDto } from '@asra/types';
+import { SOURCE_TYPE_LABELS } from '@asra/validation';
 import {
   AlertTriangle,
   Award,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 import * as React from 'react';
 
+import { CertificateSourceBadge } from '@/components/certificates/certificate-preview';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -24,6 +26,18 @@ interface Props {
   /** Server-side lookup for `/verify/<id>`; omitted on the empty search page. */
   initialLookup?: CertificateLookup | null;
 }
+
+const SUBJECT_FIELD_LABELS: Record<CertificateSourceType, string> = {
+  COURSE: 'Course',
+  ACADEMY_QUIZ: 'Academy Quiz',
+  COMPETITION: 'Competition',
+  EXAM: 'Examination',
+  EVENT: 'Event',
+  WORKSHOP: 'Workshop',
+  TRAINING: 'Training Program',
+  MANUAL: 'Program / Recognition',
+  CUSTOM: 'Program / Recognition',
+};
 
 export function CertificateVerificationView({ initialCode = '', initialLookup = null }: Props) {
   const [code, setCode] = React.useState(initialCode);
@@ -105,42 +119,82 @@ export function CertificateVerificationView({ initialCode = '', initialLookup = 
       {data && (
         <Card className="overflow-hidden border-2 border-emerald-600/30 shadow-md">
           {/* Status Banner */}
-          <div
-            className={`flex items-center gap-3 p-4 text-white ${
-              data.status === 'ISSUED' ? 'bg-emerald-800' : 'bg-red-800'
-            }`}
-          >
-            {data.status === 'ISSUED' ? (
-              <>
-                <ShieldCheck className="h-6 w-6 flex-shrink-0 text-emerald-300" />
-                <div>
-                  <h3 className="text-lg font-semibold">Authentic & Verified Certificate</h3>
-                  <p className="text-xs text-emerald-100 sm:text-sm">
-                    This official credential was issued by ASRA Academy and is in good standing.
-                  </p>
-                </div>
-              </>
-            ) : (
-              <>
-                <ShieldAlert className="h-6 w-6 flex-shrink-0 text-red-200" />
-                <div>
-                  <h3 className="text-lg font-semibold">Certificate Revoked</h3>
-                  <p className="text-xs text-red-200 sm:text-sm">
-                    This credential was officially revoked by academy administration.
-                  </p>
-                </div>
-              </>
-            )}
-          </div>
+          {(() => {
+            const effective = data.lifecycleStatus ?? data.status;
+            const isValid = effective === 'ISSUED' && data.valid;
+            const isSuperseded = effective === 'SUPERSEDED';
+            return (
+              <div
+                className={`flex items-center gap-3 p-4 text-white ${
+                  isValid ? 'bg-emerald-800' : isSuperseded ? 'bg-amber-800' : 'bg-red-800'
+                }`}
+              >
+                {isValid ? (
+                  <>
+                    <ShieldCheck className="h-6 w-6 flex-shrink-0 text-emerald-300" />
+                    <div>
+                      <h3 className="text-lg font-semibold">Authentic & Verified Certificate</h3>
+                      <p className="text-xs text-emerald-100 sm:text-sm">
+                        This official credential was issued by ASRA Academy and is in good standing.
+                      </p>
+                    </div>
+                  </>
+                ) : isSuperseded ? (
+                  <>
+                    <ShieldAlert className="h-6 w-6 flex-shrink-0 text-amber-200" />
+                    <div>
+                      <h3 className="text-lg font-semibold">
+                        Certificate Superseded (No Longer Valid)
+                      </h3>
+                      <p className="text-xs text-amber-100 sm:text-sm">
+                        This credential has been replaced by a newer reissued certificate and is no
+                        longer valid.
+                        {data.supersededByCertificateNumber && (
+                          <>
+                            {' '}
+                            Replacement ID:{' '}
+                            <a
+                              href={`/verify/${encodeURIComponent(data.supersededByCertificateNumber)}`}
+                              className="font-mono font-semibold underline"
+                            >
+                              {data.supersededByCertificateNumber}
+                            </a>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert className="h-6 w-6 flex-shrink-0 text-red-200" />
+                    <div>
+                      <h3 className="text-lg font-semibold">Certificate Revoked</h3>
+                      <p className="text-xs text-red-200 sm:text-sm">
+                        This credential was officially revoked by academy administration.
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           <CardContent className="space-y-6 p-6 sm:p-8">
             {/* Certificate Header Branding */}
             <div className="flex flex-col justify-between gap-4 border-b pb-6 sm:flex-row sm:items-center">
-              <div className="space-y-1">
-                <span className="text-xs font-semibold tracking-wider text-amber-700 uppercase">
-                  {data.academyName}
-                </span>
-                <h2 className="text-2xl font-bold text-slate-900">Certificate of Completion</h2>
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold tracking-wider text-amber-700 uppercase">
+                    {data.academyName}
+                  </span>
+                  <CertificateSourceBadge
+                    sourceType={data.sourceType}
+                    sourceLabel={data.sourceLabel}
+                  />
+                </div>
+                <h2 className="text-2xl font-bold text-slate-900">
+                  {data.certificateTitle || 'Certificate of Completion'}
+                </h2>
               </div>
               <div className="flex items-center gap-2">
                 <span className="rounded border bg-slate-100 px-3 py-1.5 font-mono text-sm text-slate-800">
@@ -156,7 +210,7 @@ export function CertificateVerificationView({ initialCode = '', initialLookup = 
               </div>
             </div>
 
-            {/* Recipient and Course Details */}
+            {/* Recipient and Program Details */}
             <div className="grid gap-6 sm:grid-cols-2">
               <div className="space-y-1">
                 <span className="text-xs font-semibold text-muted-foreground uppercase">
@@ -166,13 +220,31 @@ export function CertificateVerificationView({ initialCode = '', initialLookup = 
               </div>
               <div className="space-y-1">
                 <span className="text-xs font-semibold text-muted-foreground uppercase">
-                  Course
+                  {SUBJECT_FIELD_LABELS[data.sourceType] ?? SOURCE_TYPE_LABELS[data.sourceType]}
                 </span>
                 <p className="text-xl font-bold text-emerald-900">{data.courseTitle}</p>
               </div>
+              {data.achievementDetails && (
+                <div className="space-y-1 sm:col-span-2">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase">
+                    Recognition / Achievement
+                  </span>
+                  <p className="text-base font-semibold text-amber-900">
+                    {data.achievementDetails}
+                  </p>
+                </div>
+              )}
+              {data.description && (
+                <div className="space-y-1 sm:col-span-2">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase">
+                    Credential Statement
+                  </span>
+                  <p className="text-sm text-slate-700">{data.description}</p>
+                </div>
+              )}
               <div className="space-y-1">
                 <span className="text-xs font-semibold text-muted-foreground uppercase">
-                  Completion Date
+                  {data.sourceType === 'COURSE' ? 'Completion Date' : 'Achievement Date'}
                 </span>
                 <p className="text-base font-medium text-slate-800">
                   {formatDate(data.completedAt)}
@@ -186,18 +258,62 @@ export function CertificateVerificationView({ initialCode = '', initialLookup = 
               </div>
             </div>
 
-            {/* Revocation Details if revoked */}
-            {data.status === 'REVOKED' && (
-              <div className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-4 text-red-900">
+            {data.signatories && data.signatories.length > 0 && (
+              <div className="space-y-2 border-t pt-4">
+                <span className="text-xs font-semibold text-muted-foreground uppercase">
+                  Authorized Signatories
+                </span>
+                <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+                  {data.signatories.map((sig, idx) => (
+                    <div
+                      key={`${sig.fullName}-${sig.designation}-${idx}`}
+                      className="rounded-md border bg-slate-50/70 px-3 py-2"
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{sig.fullName}</p>
+                      <p className="text-xs text-slate-600">{sig.designation}</p>
+                      {sig.department && (
+                        <p className="text-[11px] text-slate-500">{sig.department}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Revocation / Superseded Details */}
+            {(data.status !== 'ISSUED' || !data.valid) && (
+              <div
+                className={`space-y-1 rounded-lg border p-4 ${
+                  (data.lifecycleStatus ?? data.status) === 'SUPERSEDED'
+                    ? 'border-amber-200 bg-amber-50 text-amber-900'
+                    : 'border-red-200 bg-red-50 text-red-900'
+                }`}
+              >
                 <div className="flex items-center gap-2 text-sm font-semibold">
-                  <AlertTriangle className="h-4 w-4 text-red-600" />
-                  Revocation Notice
+                  <AlertTriangle
+                    className={`h-4 w-4 ${
+                      (data.lifecycleStatus ?? data.status) === 'SUPERSEDED'
+                        ? 'text-amber-700'
+                        : 'text-red-600'
+                    }`}
+                  />
+                  {(data.lifecycleStatus ?? data.status) === 'SUPERSEDED'
+                    ? 'Superseded Credential Notice'
+                    : 'Revocation Notice'}
                 </div>
                 {data.revokedAt && (
-                  <p className="text-xs text-red-700">Revoked on: {formatDate(data.revokedAt)}</p>
+                  <p className="text-xs opacity-90">Recorded on: {formatDate(data.revokedAt)}</p>
                 )}
                 {data.revokedReason && (
-                  <p className="mt-1 text-xs text-red-800">Reason: {data.revokedReason}</p>
+                  <p className="mt-1 text-xs opacity-95">Reason: {data.revokedReason}</p>
+                )}
+                {data.supersededByCertificateNumber && (
+                  <p className="mt-1 text-xs font-medium">
+                    Active replacement:{' '}
+                    <span className="font-mono font-semibold">
+                      {data.supersededByCertificateNumber}
+                    </span>
+                  </p>
                 )}
               </div>
             )}
