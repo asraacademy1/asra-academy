@@ -39,7 +39,13 @@ export function createApp(): Express {
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
-      exposedHeaders: ['X-Request-Id', 'Retry-After', 'RateLimit', 'RateLimit-Policy'],
+      exposedHeaders: [
+        'Content-Disposition',
+        'X-Request-Id',
+        'Retry-After',
+        'RateLimit',
+        'RateLimit-Policy',
+      ],
       maxAge: 600,
     }),
   );

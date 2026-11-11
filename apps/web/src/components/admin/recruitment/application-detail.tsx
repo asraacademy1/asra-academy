@@ -10,9 +10,7 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
-  Download,
   FileCheck,
-  FileText,
   Mail,
   MapPin,
   MessageSquare,
@@ -41,10 +39,12 @@ import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
+import { triggerBlobDownload } from '@/lib/certificates';
 import { Section } from '../admin-kit';
 import { ErrorPanel, LoadingPanel } from '../admin-ui';
 import { errorMessage, useAdminApi, useApiResource } from '../use-admin';
 import { StatusBadge } from './recruitment-overview';
+import { ApplicantResumeCard, ensurePdfBlob, ResumePreviewDialog } from './resume-actions';
 
 export function ApplicationDetail({ id }: { id: string }) {
   const api = useAdminApi();
@@ -92,21 +92,83 @@ export function ApplicationDetail({ id }: { id: string }) {
   const [emailMessage, setEmailMessage] = React.useState('');
   const [isSendingEmail, setIsSendingEmail] = React.useState(false);
 
-  // Resume Download Handler
+  // Independent Resume Preview & Download Handlers
   const [isDownloadingResume, setIsDownloadingResume] = React.useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = React.useState(false);
+  const [isLoadingPreview, setIsLoadingPreview] = React.useState(false);
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const previewUrlRef = React.useRef<string | null>(null);
+  const previewRequestSeqRef = React.useRef(0);
+
+  const revokePreviewUrl = React.useCallback(() => {
+    if (previewUrlRef.current) {
+      window.URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewUrl(null);
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      previewRequestSeqRef.current += 1;
+      if (previewUrlRef.current) {
+        window.URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  const loadResumePreview = React.useCallback(async () => {
+    if (!app) return;
+    const requestSeq = ++previewRequestSeqRef.current;
+    revokePreviewUrl();
+    setPreviewError(null);
+    setIsLoadingPreview(true);
+    try {
+      const rawBlob = await api.download(
+        `/admin/recruitment/applications/${app.id}/resume?disposition=inline`,
+      );
+      if (previewRequestSeqRef.current !== requestSeq) return;
+      const pdfBlob = ensurePdfBlob(rawBlob);
+      const objectUrl = window.URL.createObjectURL(pdfBlob);
+      previewUrlRef.current = objectUrl;
+      setPreviewUrl(objectUrl);
+    } catch (err) {
+      if (previewRequestSeqRef.current !== requestSeq) return;
+      setPreviewError(errorMessage(err));
+    } finally {
+      if (previewRequestSeqRef.current === requestSeq) {
+        setIsLoadingPreview(false);
+      }
+    }
+  }, [api, app, revokePreviewUrl]);
+
+  const handleOpenPreview = () => {
+    if (!app) return;
+    setIsPreviewOpen(true);
+    void loadResumePreview();
+  };
+
+  const handlePreviewOpenChange = (open: boolean) => {
+    setIsPreviewOpen(open);
+    if (!open) {
+      previewRequestSeqRef.current += 1;
+      revokePreviewUrl();
+      setPreviewError(null);
+      setIsLoadingPreview(false);
+    }
+  };
+
   const handleDownloadResume = async () => {
     if (!app) return;
     setIsDownloadingResume(true);
     try {
-      const blob = await api.download(`/admin/recruitment/applications/${app.id}/resume`);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = app.resumeOriginalName || 'resume.pdf';
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      const rawBlob = await api.download(
+        `/admin/recruitment/applications/${app.id}/resume?disposition=attachment`,
+      );
+      const pdfBlob = ensurePdfBlob(rawBlob);
+      triggerBlobDownload(pdfBlob, app.resumeOriginalName || 'resume.pdf');
     } catch (err) {
       toast.error('Download Failed', {
         description: errorMessage(err),
@@ -413,29 +475,14 @@ export function ApplicationDetail({ id }: { id: string }) {
           </Card>
 
           {/* Resume Card */}
-          <Card className="grid gap-4 p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="type-h4 text-heading">Resume PDF</h2>
-              <Badge variant="outline">Verified PDF</Badge>
-            </div>
-            <div className="flex items-center gap-3 rounded-lg border bg-muted/20 p-3">
-              <FileText className="size-8 shrink-0 text-primary" />
-              <div className="overflow-hidden">
-                <div className="truncate font-medium text-heading">{app.resumeOriginalName}</div>
-                <div className="type-caption text-muted-foreground">
-                  {(app.resumeFileSize / (1024 * 1024)).toFixed(2)} MB · application/pdf
-                </div>
-              </div>
-            </div>
-            <Button
-              onClick={handleDownloadResume}
-              disabled={isDownloadingResume}
-              className="w-full"
-            >
-              <Download className="mr-2 size-4" />
-              {isDownloadingResume ? 'Downloading…' : 'Download / Preview Resume'}
-            </Button>
-          </Card>
+          <ApplicantResumeCard
+            resumeOriginalName={app.resumeOriginalName}
+            resumeFileSize={app.resumeFileSize}
+            isPreviewLoading={isLoadingPreview}
+            isDownloading={isDownloadingResume}
+            onPreview={handleOpenPreview}
+            onDownload={handleDownloadResume}
+          />
 
           {/* Applied Role Summary */}
           <Card className="grid gap-3 p-5">
@@ -908,6 +955,17 @@ export function ApplicationDetail({ id }: { id: string }) {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ResumePreviewDialog
+        open={isPreviewOpen}
+        onOpenChange={handlePreviewOpenChange}
+        fileName={app.resumeOriginalName}
+        fileSize={app.resumeFileSize}
+        loading={isLoadingPreview}
+        error={previewError}
+        previewUrl={previewUrl}
+        onRetry={() => void loadResumePreview()}
+      />
     </div>
   );
 }

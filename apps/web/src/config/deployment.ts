@@ -40,7 +40,9 @@ export function buildContentSecurityPolicy({ apiUrl, appUrl, isDev }: HeaderOpti
     'connect-src': ["'self'", apiOrigin, RAZORPAY, ...(isDev ? ['ws:'] : [])],
     // Directly hosted lesson videos (any HTTPS host) play in a native <video>.
     'media-src': ["'self'", 'blob:', 'https:'],
-    'frame-src': [...VIDEO_EMBEDS, RAZORPAY],
+    // Same-origin blob URLs allow authenticated PDF previews inside <iframe> modals without
+    // making private documents public or permitting <object>/<embed>.
+    'frame-src': ["'self'", 'blob:', ...VIDEO_EMBEDS, RAZORPAY],
     'worker-src': ["'self'", 'blob:'],
     'manifest-src': ["'self'"],
     'object-src': ["'none'"],

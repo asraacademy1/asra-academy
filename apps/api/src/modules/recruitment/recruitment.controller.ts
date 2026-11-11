@@ -228,13 +228,14 @@ export const recruitmentController = {
   async downloadResume(req: Request, res: Response) {
     const adminId = req.auth!.userId;
     const id = req.params.id as string;
+    const disposition = req.query.disposition === 'attachment' ? 'attachment' : 'inline';
     const { stream, originalName, fileSize } = await recruitmentService.getResumeStream(
       adminId,
       id,
     );
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${originalName}"`);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${originalName}"`);
     res.setHeader('Cache-Control', 'private, no-cache, no-store');
     if (fileSize > 0) {
       res.setHeader('Content-Length', String(fileSize));
