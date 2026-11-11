@@ -6,6 +6,8 @@ import {
   academyQuizPatchSchema,
   academyQuizTransitionSchema,
   adminAcademyAttemptListQuerySchema,
+  adminAcademyParticipantsExportQuerySchema,
+  adminAcademyParticipantsQuerySchema,
   copyQuestionsSchema,
   copySourceListQuerySchema,
   questionInputSchema,
@@ -15,6 +17,8 @@ import {
   type AcademyQuizPatchInput,
   type AcademyQuizTransition,
   type AdminAcademyAttemptListQuery,
+  type AdminAcademyParticipantsExportQuery,
+  type AdminAcademyParticipantsQuery,
   type CopyQuestionsInput,
   type CopySourceKind,
   type CopySourceListQuery,
@@ -29,6 +33,7 @@ import { sendSuccess } from '../../utils/api-response.js';
 import { idParamsSchema } from '../../validators/common.validators.js';
 import { academyQuizAdminService as quizzes } from './academy-quizzes.service.js';
 import { academyCopyService as copies } from './copy.service.js';
+import { academyParticipantsService as participants } from './participants.service.js';
 import { academyResultsService as results } from './results.service.js';
 
 /**
@@ -196,3 +201,30 @@ r.get('/academy-quizzes/:id/leaderboard', manage, byId, async (req: Request, res
 r.get('/academy-attempts/:id', manage, byId, async (req: Request, res: Response) => {
   sendSuccess(res, await results.adminAttempt(id(req)));
 });
+
+// --- Participants (registrations, managers) -----------------------------------------------
+
+r.get(
+  '/academy-quizzes/:id/participants',
+  manage,
+  validateRequest({ params: idParamsSchema, query: adminAcademyParticipantsQuerySchema }),
+  async (req: Request, res: Response) => {
+    const query = req.query as unknown as AdminAcademyParticipantsQuery;
+    sendSuccess(res, await participants.list(id(req), query));
+  },
+);
+
+r.get(
+  '/academy-quizzes/:id/participants/export',
+  manage,
+  validateRequest({ params: idParamsSchema, query: adminAcademyParticipantsExportQuerySchema }),
+  async (req: Request, res: Response) => {
+    const query = req.query as unknown as AdminAcademyParticipantsExportQuery;
+    const { filename, csv } = await participants.exportCsv(id(req), query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.status(200).send(csv);
+  },
+);

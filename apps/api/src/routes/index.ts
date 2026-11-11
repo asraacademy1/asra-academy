@@ -5,6 +5,10 @@ import { requirePermission } from '../middleware/authorize.js';
 import { assessmentMediaRouter } from '../modules/assessments/media/media.routes.js';
 import { academicsAdminRouter } from '../modules/academics/academics.routes.js';
 import { academyQuizzesAdminRouter } from '../modules/academy-quizzes/academy-quizzes.routes.js';
+import {
+  publicParticipateRouter,
+  publicQuizzesSitemapHandler,
+} from '../modules/academy-quizzes/participate.routes.js';
 import { adminPortalRouter } from '../modules/admin/admin.routes.js';
 import {
   certificatesAdminRouter,
@@ -39,6 +43,10 @@ apiRouter.use('/auth', authRouter);
 apiRouter.use('/courses', publicCoursesRouter);
 /** Public course URLs for the website sitemap (PHASE 14). */
 apiRouter.use('/sitemap', publicSitemapRouter);
+apiRouter.get('/sitemap/academy-quizzes', publicQuizzesSitemapHandler);
+
+/** Public Participate discovery & quiz registration. */
+apiRouter.use('/participate', publicParticipateRouter);
 
 /** Public certificate verification (PHASE 13). */
 apiRouter.use('/certificates', publicCertificatesRouter);

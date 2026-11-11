@@ -218,7 +218,18 @@ function NavDisclosure({
   const [open, setOpen] = React.useState(false);
   const rootRef = React.useRef<HTMLDivElement>(null);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
+  const lastHoverOpenAt = React.useRef(0);
+  const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelId = React.useId();
+
+  const clearCloseTimer = React.useCallback(() => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, []);
+
+  React.useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -239,9 +250,22 @@ function NavDisclosure({
     };
   }, [open]);
 
+  const compact = (item.children?.length ?? 0) <= 4;
+
   return (
     <div
       ref={rootRef}
+      onMouseEnter={() => {
+        clearCloseTimer();
+        if (!open) {
+          lastHoverOpenAt.current = Date.now();
+          setOpen(true);
+        }
+      }}
+      onMouseLeave={() => {
+        clearCloseTimer();
+        closeTimer.current = setTimeout(() => setOpen(false), 120);
+      }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
       }}
@@ -251,7 +275,13 @@ function NavDisclosure({
         type="button"
         aria-expanded={open}
         aria-controls={panelId}
-        onClick={() => setOpen((value) => !value)}
+        onClick={(event) => {
+          // If pointer hover opened the menu right before click, keep it open rather than immediately closing.
+          if (open && event.detail > 0 && Date.now() - lastHoverOpenAt.current < 300) {
+            return;
+          }
+          setOpen((value) => !value);
+        }}
         className={cn(
           desktopLinkClasses,
           'cursor-pointer',
@@ -273,27 +303,32 @@ function NavDisclosure({
         onClick={(event) => {
           if ((event.target as Element).closest('a')) setOpen(false);
         }}
-        className="absolute top-full left-1/2 z-50 mt-2 w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border bg-popover p-2 shadow-raised motion-safe:animate-scale-in"
+        className={cn(
+          'absolute top-full left-1/2 z-50 -translate-x-1/2 pt-2',
+          compact ? 'w-56' : 'w-[min(34rem,calc(100vw-2rem))]',
+        )}
       >
-        <ul className="grid gap-0.5 sm:grid-cols-2">
-          {item.children?.map((child) => {
-            const childActive = isActivePath(pathname, child.href, child.exact);
-            return (
-              <li key={`${child.href}-${child.label}`}>
-                <Link
-                  href={child.href}
-                  aria-current={childActive ? 'page' : undefined}
-                  className={cn(
-                    'flex min-h-control-sm items-center rounded-lg px-3 py-2 type-body-sm font-medium transition-colors outline-none hover:bg-secondary focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                    childActive ? 'bg-secondary text-primary' : 'text-foreground',
-                  )}
-                >
-                  {child.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="rounded-xl border bg-popover p-2 shadow-raised motion-safe:animate-scale-in">
+          <ul className={cn('grid gap-0.5', !compact && 'sm:grid-cols-2')}>
+            {item.children?.map((child) => {
+              const childActive = isActivePath(pathname, child.href, child.exact);
+              return (
+                <li key={`${child.href}-${child.label}`}>
+                  <Link
+                    href={child.href}
+                    aria-current={childActive ? 'page' : undefined}
+                    className={cn(
+                      'flex min-h-control-sm items-center rounded-lg px-3 py-2 type-body-sm font-medium transition-colors outline-none hover:bg-secondary focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                      childActive ? 'bg-secondary text-primary' : 'text-foreground',
+                    )}
+                  >
+                    {child.label}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </div>
     </div>
   );

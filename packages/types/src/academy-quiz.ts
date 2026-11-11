@@ -67,6 +67,7 @@ export interface AcademyQuizSettingsDto {
   resultRelease: ResultRelease;
   answerReveal: AnswerReveal;
   leaderboardVisibility: LeaderboardVisibility;
+  visibility: AcademyQuizVisibility;
   maskNames: boolean;
   attemptCounting: AttemptCounting;
   tieBreak: RankingTieBreak;
@@ -77,10 +78,12 @@ export interface AdminAcademyQuizItem {
   slug: string;
   title: string;
   status: AssessmentStatus;
+  visibility: AcademyQuizVisibility;
   phase: AcademyQuizPhase;
   startsAt: string;
   endsAt: string;
   questionCount: number;
+  registrationsCount?: number;
   attempts: AttemptCounts;
   publishedAt: string | null;
   updatedAt: string;
@@ -338,4 +341,121 @@ export interface StudentAcademyResultItem {
   /** Scheduled release time while waiting for it. */
   resultsAt: string | null;
   result: AttemptScoreDto | null;
+}
+
+export type AcademyQuizVisibility = 'PUBLIC' | 'PRIVATE';
+
+export type PublicAcademyQuizPhase = Exclude<AcademyQuizPhase, 'DRAFT'>;
+
+export interface PublicParticipateSummaryDto {
+  liveQuizzesCount: number;
+  upcomingQuizzesCount: number;
+  competitionsCount: number;
+  assessmentsCount: number;
+}
+
+export interface PublicAcademyQuizItem {
+  id: string;
+  slug: string;
+  title: string;
+  summary: string | null;
+  banner: MediaDto | null;
+  phase: PublicAcademyQuizPhase;
+  startsAt: string;
+  endsAt: string;
+  timeZone: string;
+  timerMode: AcademyTimerMode;
+  durationMinutes: number | null;
+  questionTimeSeconds: number | null;
+  questionsPerAttempt: number;
+  totalMarks: number;
+  hasPrizes: boolean;
+  eligibleClasses: { id: string; name: string }[];
+  eligibleStreams: { id: string; name: string }[];
+  registrationOpen: boolean;
+  registrationClosedReason: string | null;
+}
+
+export interface PublicAcademyQuizDetail extends PublicAcademyQuizItem {
+  description: string | null;
+  instructions: string | null;
+  prizes: AcademyPrizeDto[];
+  navigation: QuestionNavigation;
+  requireAnswerToAdvance: boolean;
+  negativeMarking: boolean;
+  passPercent: number;
+  maxAttempts: number;
+  resultsAt: string | null;
+  resultRelease: ResultRelease;
+  answerReveal: AnswerReveal;
+  leaderboardVisible: boolean;
+  serverNow: string;
+}
+
+export interface PublicParticipateActivitiesDto {
+  summary: PublicParticipateSummaryDto;
+  liveQuizzes: PublicAcademyQuizItem[];
+  upcomingQuizzes: PublicAcademyQuizItem[];
+  competitions: PublicAcademyQuizItem[];
+  assessments: PublicAcademyQuizItem[];
+  serverNow: string;
+}
+
+export type QuizRegistrationBlockCode =
+  | 'EMAIL_NOT_VERIFIED'
+  | 'NOT_STUDENT'
+  | 'NOT_ELIGIBLE'
+  | 'QUIZ_CLOSED'
+  | 'QUIZ_ENDED'
+  | 'QUIZ_UNAVAILABLE'
+  | 'ALREADY_REGISTERED';
+
+export interface QuizRegistrationStatusDto {
+  quizId: string;
+  slug: string;
+  registered: boolean;
+  registeredAt: string | null;
+  emailVerified: boolean;
+  canRegister: boolean;
+  blockedCode: QuizRegistrationBlockCode | null;
+  blockedReason: string | null;
+  eligibleClasses: { id: string; name: string }[];
+  eligibleStreams: { id: string; name: string }[];
+}
+
+export interface QuizRegistrationResultDto {
+  registered: true;
+  registeredAt: string;
+  quizId: string;
+  slug: string;
+  title: string;
+}
+
+export interface PublicSitemapQuiz {
+  slug: string;
+  updatedAt: string;
+}
+
+export type ParticipantSort = 'newest' | 'oldest';
+export type ParticipantVerificationFilter = 'ALL' | 'VERIFIED' | 'UNVERIFIED';
+export type ParticipantRegistrationStatus = 'REGISTERED';
+
+export interface AdminAcademyParticipantItem {
+  id: string;
+  userId: string;
+  studentName: string;
+  email: string;
+  phone: string | null;
+  registeredAt: string;
+  emailVerified: boolean;
+  status: ParticipantRegistrationStatus;
+}
+
+export interface AdminAcademyParticipantsPage {
+  items: AdminAcademyParticipantItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  totalRegistered: number;
 }

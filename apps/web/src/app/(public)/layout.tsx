@@ -7,6 +7,7 @@ import {
   publicNavigation,
 } from '@/config/navigation';
 import { getPublicCareerCategories } from '@/lib/careers';
+import { getPublicParticipateSummary } from '@/lib/participate';
 
 /**
  * Shared shell for every public page: header, `<main id="main-content">` (the skip link's target)
@@ -14,12 +15,10 @@ import { getPublicCareerCategories } from '@/lib/careers';
  * refresh endpoint and are fully usable without signing in. Sign-in lives at /login.
  */
 export default async function PublicLayout({ children }: { children: React.ReactNode }) {
-  let careerCategories: { category: string; label: string; count: number }[] = [];
-  try {
-    careerCategories = await getPublicCareerCategories();
-  } catch {
-    careerCategories = [];
-  }
+  const [careerCategories, participateSummary] = await Promise.all([
+    getPublicCareerCategories().catch(() => []),
+    getPublicParticipateSummary(),
+  ]);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -34,6 +33,10 @@ export default async function PublicLayout({ children }: { children: React.React
       <Footer
         columns={footerNavigation}
         careerCategories={careerCategories}
+        participate={{
+          hasCompetitions: participateSummary.competitionsCount > 0,
+          hasAssessments: participateSummary.assessmentsCount > 0,
+        }}
         legalLinks={legalNavigation}
       />
     </div>

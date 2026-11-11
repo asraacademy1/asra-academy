@@ -15,6 +15,7 @@ export const QUESTION_NAVIGATIONS = ['FREE', 'LINEAR'] as const;
 export const QUESTION_SELECTIONS = ['ALL', 'RANDOM', 'BY_DIFFICULTY'] as const;
 export const RESULT_RELEASES = ['IMMEDIATE', 'SCHEDULED', 'MANUAL'] as const;
 export const LEADERBOARD_VISIBILITIES = ['HIDDEN', 'SIGNED_IN', 'PUBLIC'] as const;
+export const ACADEMY_QUIZ_VISIBILITIES = ['PUBLIC', 'PRIVATE'] as const;
 export const ATTEMPT_COUNTINGS = ['BEST', 'FIRST'] as const;
 export const RANKING_TIE_BREAKS = ['TIME_TAKEN', 'SUBMITTED_AT'] as const;
 export const ACADEMY_QUIZ_TRANSITIONS = ['publish', 'unpublish', 'close', 'reopen'] as const;
@@ -117,6 +118,7 @@ const fieldShape = {
   resultRelease: z.enum(RESULT_RELEASES),
   answerReveal: z.enum(ANSWER_REVEALS),
   leaderboardVisibility: z.enum(LEADERBOARD_VISIBILITIES),
+  visibility: z.enum(ACADEMY_QUIZ_VISIBILITIES),
   maskNames: z.boolean(),
   attemptCounting: z.enum(ATTEMPT_COUNTINGS),
   tieBreak: z.enum(RANKING_TIE_BREAKS),
@@ -151,6 +153,7 @@ export const ACADEMY_QUIZ_DEFAULTS = {
   resultRelease: 'IMMEDIATE',
   answerReveal: 'AFTER_CLOSE',
   leaderboardVisibility: 'SIGNED_IN',
+  visibility: 'PUBLIC',
   maskNames: false,
   attemptCounting: 'BEST',
   tieBreak: 'TIME_TAKEN',
@@ -261,6 +264,7 @@ export const ACADEMY_POST_PUBLISH_FIELDS = [
   'resultsAt',
   'answerReveal',
   'leaderboardVisibility',
+  'visibility',
   'maskNames',
 ] as const satisfies readonly (keyof Settings)[];
 
@@ -346,3 +350,80 @@ export const adminAcademyAttemptListQuerySchema = paginationQuerySchema.extend({
   q: z.string().trim().max(100).optional(),
 });
 export type AdminAcademyAttemptListQuery = z.infer<typeof adminAcademyAttemptListQuerySchema>;
+
+// --- Public Participate & Registration ---------------------------------------------------------
+
+export const PARTICIPATE_QUIZ_FILTERS = ['all', 'live', 'upcoming'] as const;
+export type ParticipateQuizFilter = (typeof PARTICIPATE_QUIZ_FILTERS)[number];
+
+export const publicParticipateQuizzesQuerySchema = paginationQuerySchema.extend({
+  status: z
+    .string()
+    .trim()
+    .transform((value) => value.toLowerCase())
+    .pipe(z.enum(PARTICIPATE_QUIZ_FILTERS))
+    .default('all'),
+});
+export type PublicParticipateQuizzesQuery = z.infer<typeof publicParticipateQuizzesQuerySchema>;
+
+export const academyQuizRegisterSchema = z.object({}).strict();
+export type AcademyQuizRegisterInput = z.infer<typeof academyQuizRegisterSchema>;
+
+// --- Admin Participants Management -------------------------------------------------------------
+
+export const PARTICIPANT_SORT_OPTIONS = ['newest', 'oldest'] as const;
+export const PARTICIPANT_VERIFICATION_FILTERS = ['ALL', 'VERIFIED', 'UNVERIFIED'] as const;
+
+export const adminAcademyParticipantsQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    pageSize: z.coerce.number().int().min(1).max(100).optional(),
+    search: z
+      .string()
+      .trim()
+      .max(100)
+      .optional()
+      .transform((value) => (value ? value : undefined)),
+    sort: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value.toLowerCase() : 'newest'))
+      .pipe(z.enum(PARTICIPANT_SORT_OPTIONS)),
+    verificationStatus: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value.toUpperCase() : 'ALL'))
+      .pipe(z.enum(PARTICIPANT_VERIFICATION_FILTERS)),
+  })
+  .transform(({ limit, pageSize, ...rest }) => ({
+    ...rest,
+    limit: limit ?? pageSize ?? 20,
+  }));
+export type AdminAcademyParticipantsQuery = z.infer<typeof adminAcademyParticipantsQuerySchema>;
+
+export const adminAcademyParticipantsExportQuerySchema = z.object({
+  search: z
+    .string()
+    .trim()
+    .max(100)
+    .optional()
+    .transform((value) => (value ? value : undefined)),
+  sort: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? value.toLowerCase() : 'newest'))
+    .pipe(z.enum(PARTICIPANT_SORT_OPTIONS)),
+  verificationStatus: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? value.toUpperCase() : 'ALL'))
+    .pipe(z.enum(PARTICIPANT_VERIFICATION_FILTERS)),
+});
+export type AdminAcademyParticipantsExportQuery = z.infer<
+  typeof adminAcademyParticipantsExportQuerySchema
+>;

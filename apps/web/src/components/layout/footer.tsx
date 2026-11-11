@@ -14,9 +14,15 @@ export type CareerCategoryLink = {
   count?: number;
 };
 
+export type ParticipateFooterAvailability = {
+  hasCompetitions?: boolean;
+  hasAssessments?: boolean;
+};
+
 type FooterProps = {
   columns?: { title: string; href?: string; links: NavItem[] }[];
   careerCategories?: CareerCategoryLink[];
+  participate?: ParticipateFooterAvailability;
   /** Only pass legal links whose pages exist. */
   legalLinks?: NavItem[];
   className?: string;
@@ -26,18 +32,40 @@ const linkClasses =
   'rounded-sm text-muted-foreground transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none';
 
 /**
- * Builds the effective footer columns, dynamically expanding the CAREERS section
- * with active categories or maintaining the base link when none exist.
+ * Builds the effective footer columns, dynamically expanding the CAREERS section with active
+ * categories and the PARTICIPATE section with live/upcoming quizzes and available activities.
  */
 export function buildFooterColumns(
   columns: { title: string; href?: string; links: NavItem[] }[],
   careerCategories: CareerCategoryLink[] = [],
+  participate: ParticipateFooterAvailability = {},
 ): { title: string; href?: string; links: NavItem[] }[] {
   let hasCareersColumn = false;
+  let hasParticipateColumn = false;
+
+  const participateLinks = (): NavItem[] => [
+    { label: 'Live Quizzes', href: '/participate/quizzes?status=live' },
+    { label: 'Upcoming Quizzes', href: '/participate/quizzes?status=upcoming' },
+    ...(participate.hasCompetitions
+      ? [{ label: 'Competitions', href: '/participate/competitions' }]
+      : []),
+    ...(participate.hasAssessments
+      ? [{ label: 'Assessments', href: '/participate/assessments' }]
+      : []),
+  ];
 
   const mapped = columns.map((column) => {
-    const isCareers = column.title.toLowerCase() === 'careers';
-    if (!isCareers) {
+    const titleLower = column.title.toLowerCase();
+    if (titleLower === 'participate') {
+      hasParticipateColumn = true;
+      return {
+        ...column,
+        href: column.href ?? '/participate',
+        links: participateLinks(),
+      };
+    }
+
+    if (titleLower !== 'careers') {
       // Strip any legacy /careers link from other columns so it only lives in the dedicated CAREERS section
       return {
         ...column,
@@ -83,6 +111,14 @@ export function buildFooterColumns(
     });
   }
 
+  if (!hasParticipateColumn) {
+    mapped.push({
+      title: 'Participate',
+      href: '/participate',
+      links: participateLinks(),
+    });
+  }
+
   return mapped;
 }
 
@@ -96,14 +132,15 @@ export function buildFooterColumns(
 export function Footer({
   columns = [],
   careerCategories = [],
+  participate = {},
   legalLinks = [],
   className,
 }: FooterProps) {
   const year = new Date().getFullYear();
 
   const displayColumns = React.useMemo(
-    () => buildFooterColumns(columns, careerCategories),
-    [columns, careerCategories],
+    () => buildFooterColumns(columns, careerCategories, participate),
+    [columns, careerCategories, participate],
   );
 
   return (

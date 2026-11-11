@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { after, describe, it } from 'node:test';
+import { resolvePrismaCliDatasourceUrl } from '../prisma.config.js';
 import { disconnectPrisma, prisma } from '../src/database/prisma.js';
 
 /** Runs the Prisma CLI against the test database (env from tests/setup-env.ts). */
@@ -87,5 +88,32 @@ describe('Prisma schema & migrations', () => {
     ]) {
       assert.ok(names.includes(expected), `missing CHECK constraint ${expected}`);
     }
+  });
+
+  it('adds connect_timeout=20 to remote Prisma CLI datasource URLs without duplicating parameters', () => {
+    const remote =
+      'postgresql://user:p%40ss@ep-calm-pond.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+    const resolved = resolvePrismaCliDatasourceUrl(remote);
+    assert.ok(resolved);
+    const parsed = new URL(resolved);
+    assert.equal(parsed.username, 'user');
+    assert.equal(parsed.password, 'p%40ss');
+    assert.equal(parsed.hostname, 'ep-calm-pond.ap-southeast-1.aws.neon.tech');
+    assert.equal(parsed.pathname, '/neondb');
+    assert.equal(parsed.searchParams.get('sslmode'), 'require');
+    assert.equal(parsed.searchParams.get('channel_binding'), 'require');
+    assert.deepEqual(parsed.searchParams.getAll('connect_timeout'), ['20']);
+
+    // Idempotent when already resolved or when an explicit connect_timeout is supplied.
+    assert.equal(resolvePrismaCliDatasourceUrl(resolved), resolved);
+    const customTimeout =
+      'postgresql://user:pass@ep-calm-pond.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&connect_timeout=30';
+    assert.equal(resolvePrismaCliDatasourceUrl(customTimeout), customTimeout);
+
+    // Local development / test URLs stay unmodified.
+    const localUrl = 'postgresql://asra:local@localhost:5432/asra_academy_test?schema=public';
+    assert.equal(resolvePrismaCliDatasourceUrl(localUrl), localUrl);
+    assert.equal(resolvePrismaCliDatasourceUrl(''), undefined);
+    assert.equal(resolvePrismaCliDatasourceUrl(undefined), undefined);
   });
 });

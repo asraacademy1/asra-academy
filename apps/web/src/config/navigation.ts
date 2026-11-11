@@ -20,6 +20,15 @@ export const publicNavigation: NavItem[] = [
   },
   { label: 'Faculty', href: '/faculty' },
   { label: 'Admission', href: '/admission' },
+  {
+    label: 'Participate',
+    href: '/participate',
+    children: [
+      { label: 'Quizzes', href: '/participate/quizzes' },
+      { label: 'Competitions', href: '/participate/competitions' },
+      { label: 'Assessments', href: '/participate/assessments' },
+    ],
+  },
   { label: 'Careers', href: '/careers' },
   { label: 'Contact', href: '/contact' },
 ];
@@ -50,6 +59,14 @@ export const footerNavigation: { title: string; href?: string; links: NavItem[] 
     title: 'Careers',
     href: '/careers',
     links: [{ label: 'All openings', href: '/careers' }],
+  },
+  {
+    title: 'Participate',
+    href: '/participate',
+    links: [
+      { label: 'Live Quizzes', href: '/participate/quizzes?status=live' },
+      { label: 'Upcoming Quizzes', href: '/participate/quizzes?status=upcoming' },
+    ],
   },
 ];
 

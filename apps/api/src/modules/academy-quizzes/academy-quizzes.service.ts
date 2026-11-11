@@ -65,7 +65,10 @@ const notFound = (): never => {
   throw new AppError('NOT_FOUND', 'Academy quiz not found');
 };
 
-const quizInclude = { bannerMedia: { select: mediaRefSelect } } satisfies Prisma.AcademyQuizInclude;
+const quizInclude = {
+  bannerMedia: { select: mediaRefSelect },
+  _count: { select: { registrations: true } },
+} satisfies Prisma.AcademyQuizInclude;
 type QuizRow = Prisma.AcademyQuizGetPayload<{ include: typeof quizInclude }>;
 
 const asRef = (row: {
@@ -127,6 +130,7 @@ function settingsOf(row: QuizRow): AcademyQuizSettingsInput {
     resultRelease: row.resultRelease,
     answerReveal: row.answerReveal,
     leaderboardVisibility: row.leaderboardVisibility,
+    visibility: row.visibility,
     maskNames: row.maskNames,
     attemptCounting: row.attemptCounting,
     tieBreak: row.tieBreak,
@@ -223,10 +227,12 @@ function toItem(
     slug: row.slug,
     title: row.title,
     status: row.status,
+    visibility: row.visibility,
     phase: phaseOf(row, now),
     startsAt: row.startsAt.toISOString(),
     endsAt: row.endsAt.toISOString(),
     questionCount: totals.get(row.id)?.count ?? 0,
+    registrationsCount: row._count.registrations,
     attempts: counts.get(row.id) ?? emptyCounts(),
     publishedAt: row.publishedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),

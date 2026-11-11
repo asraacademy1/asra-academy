@@ -1,6 +1,7 @@
 import type {
   AcademyPrizeDto,
   AcademyQuizPhase,
+  AcademyQuizVisibility,
   AdminAcademyQuizDetail,
   AnswerReveal,
   AttemptCounting,
@@ -11,7 +12,11 @@ import type {
   RankingTieBreak,
   ResultRelease,
 } from '@asra/types';
-import { ACADEMY_POST_PUBLISH_FIELDS, type AcademyQuizSettingsInput } from '@asra/validation';
+import {
+  ACADEMY_POST_PUBLISH_FIELDS,
+  ACADEMY_QUIZ_VISIBILITIES,
+  type AcademyQuizSettingsInput,
+} from '@asra/validation';
 
 import { istInputToIso, isoToIstInput } from '@/lib/faculty/portal';
 
@@ -69,6 +74,11 @@ export const LEADERBOARD_LABELS: Record<LeaderboardVisibility, string> = {
   PUBLIC: 'Everyone (public page)',
 };
 
+export const VISIBILITY_LABELS: Record<AcademyQuizVisibility, string> = {
+  PUBLIC: 'Public — listed on Participate and reachable via public URL when published',
+  PRIVATE: 'Private — hidden from public listings and public URLs',
+};
+
 export const COUNTING_LABELS: Record<AttemptCounting, string> = {
   BEST: 'Best attempt',
   FIRST: 'First attempt',
@@ -124,6 +134,7 @@ export interface QuizFormState {
   resultRelease: ResultRelease;
   answerReveal: AnswerReveal;
   leaderboardVisibility: LeaderboardVisibility;
+  visibility: AcademyQuizVisibility;
   maskNames: boolean;
   attemptCounting: AttemptCounting;
   tieBreak: RankingTieBreak;
@@ -167,6 +178,7 @@ export function emptyForm(): QuizFormState {
     resultRelease: 'IMMEDIATE',
     answerReveal: 'AFTER_CLOSE',
     leaderboardVisibility: 'SIGNED_IN',
+    visibility: 'PUBLIC',
     maskNames: false,
     attemptCounting: 'BEST',
     tieBreak: 'TIME_TAKEN',
@@ -212,6 +224,7 @@ export function formFromDetail(quiz: AdminAcademyQuizDetail): QuizFormState {
     resultRelease: s.resultRelease,
     answerReveal: s.answerReveal,
     leaderboardVisibility: s.leaderboardVisibility,
+    visibility: s.visibility,
     maskNames: s.maskNames,
     attemptCounting: s.attemptCounting,
     tieBreak: s.tieBreak,
@@ -269,6 +282,7 @@ export function formToBody(form: QuizFormState) {
     resultRelease: form.resultRelease,
     answerReveal: form.answerReveal,
     leaderboardVisibility: form.leaderboardVisibility,
+    visibility: form.visibility,
     maskNames: form.maskNames,
     attemptCounting: form.attemptCounting,
     tieBreak: form.tieBreak,
@@ -317,6 +331,38 @@ export function availableActions(quiz: AdminAcademyQuizDetail, now = new Date(qu
     actions.push('publishResults');
   }
   return actions;
+}
+
+export { ACADEMY_QUIZ_VISIBILITIES };
+
+export const publicAcademyQuizPath = (slug: string) =>
+  `/participate/quizzes/${encodeURIComponent(slug)}`;
+
+export function publicQuizAccessState(
+  quiz: Pick<AdminAcademyQuizDetail, 'status' | 'slug' | 'settings'>,
+) {
+  if (quiz.status === 'DRAFT') {
+    return {
+      available: false as const,
+      path: null,
+      reason: 'Draft quiz — publish to enable the public Participate page and URL.',
+    };
+  }
+  if (quiz.settings.visibility === 'PRIVATE') {
+    return {
+      available: false as const,
+      path: null,
+      reason: 'Private visibility — hidden from the public Participate pages and URLs.',
+    };
+  }
+  return {
+    available: true as const,
+    path: publicAcademyQuizPath(quiz.slug),
+    reason:
+      quiz.status === 'CLOSED'
+        ? 'Public page stays visible in a closed state (registration disabled).'
+        : 'Published and publicly accessible on the Participate portal.',
+  };
 }
 
 /** "45 min" / "60 s per question". */
