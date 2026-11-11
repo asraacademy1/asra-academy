@@ -560,6 +560,7 @@ describe('PHASE 13 — Certificate System', () => {
       const jsonStr = JSON.stringify(verifyData);
       assert.equal(jsonStr.includes(student.email), false);
       assert.equal(jsonStr.includes(student.userId), false);
+      assert.ok(cert.enrollmentId);
       assert.equal(jsonStr.includes(cert.enrollmentId), false);
     });
 

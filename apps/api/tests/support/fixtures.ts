@@ -13,7 +13,13 @@ export function uniqueSuffix(): string {
 export async function cleanDomainTables(): Promise<void> {
   await prisma.$transaction([
     prisma.adminAuditLog.deleteMany(),
+    prisma.certificateAuditLog.deleteMany(),
+    prisma.certificateVerification.deleteMany(),
     prisma.certificate.deleteMany(),
+    prisma.certificateSettings.deleteMany(),
+    prisma.certificateTemplateSignature.deleteMany(),
+    prisma.certificateTemplate.deleteMany(),
+    prisma.certificateSignature.deleteMany(),
     prisma.notificationDelivery.deleteMany(),
     prisma.notification.deleteMany(),
     // Recruitment rows (PHASE 16) reference User and Job

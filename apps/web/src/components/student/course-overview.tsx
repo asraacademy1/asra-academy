@@ -1,8 +1,13 @@
 'use client';
 
-import type { StudentCourseOverview } from '@asra/types';
-import { Clock, UserRound } from 'lucide-react';
+import type {
+  CertificateDto,
+  CertificateEligibilityResult,
+  StudentCourseOverview,
+} from '@asra/types';
+import { Award, Clock, Download, ExternalLink, FileImage, UserRound } from 'lucide-react';
 import Link from 'next/link';
+import * as React from 'react';
 
 import { MetaList } from '@/components/asra/shared/card-parts';
 import { PageHeader } from '@/components/layout/page-header';
@@ -10,7 +15,9 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { toast } from '@/components/ui/toast';
 import { ApiClientError } from '@/lib/api';
+import { triggerBlobDownload } from '@/lib/certificates';
 import { formatDuration } from '@/lib/format';
 import { priceParts } from '@/lib/payments';
 import { courseEyebrow, learnHref } from '@/lib/student/learning';
@@ -157,6 +164,7 @@ function AccessPanel({
             No lessons are published in this course yet.
           </p>
         )}
+        <CourseCertificateBanner courseId={course.id} />
       </div>
     );
   }
@@ -218,4 +226,129 @@ function AccessPanel({
       </div>
     </Alert>
   );
+}
+
+function CourseCertificateBanner({ courseId }: { courseId: string }) {
+  const api = useStudentApi();
+  const path = `/student/courses/${courseId}/certificate/eligibility`;
+  const eligibility = useApiResource(path, () => api.get<CertificateEligibilityResult>(path));
+  const [claiming, setClaiming] = React.useState(false);
+  const [downloadingFormat, setDownloadingFormat] = React.useState<'pdf' | 'png' | null>(null);
+
+  const data = eligibility.data;
+  if (!data) return null;
+
+  const handleClaim = async () => {
+    try {
+      setClaiming(true);
+      await api.post<CertificateDto>(`/student/courses/${courseId}/certificate`);
+      toast.success('Certificate issued', {
+        description: 'Your official course certificate is ready.',
+      });
+      eligibility.reload();
+    } catch (err) {
+      toast.error('Unable to issue certificate', { description: errorMessage(err) });
+    } finally {
+      setClaiming(false);
+    }
+  };
+
+  const handleDownload = async (cert: CertificateDto, format: 'pdf' | 'png') => {
+    try {
+      setDownloadingFormat(format);
+      const blob = await api.download(`/api/v1/student/certificates/${cert.id}/download/${format}`);
+      triggerBlobDownload(blob, `ASRA-Certificate-${cert.certificateNumber}.${format}`);
+    } catch (err) {
+      toast.error(`${format.toUpperCase()} download failed`, { description: errorMessage(err) });
+    } finally {
+      setDownloadingFormat(null);
+    }
+  };
+
+  if (data.state === 'ALREADY_ISSUED' && data.certificate) {
+    const cert = data.certificate;
+    return (
+      <div className="mt-1 grid gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50/70 p-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-emerald-900">
+            <Award className="size-4 text-emerald-700" />
+            Course Certificate Issued
+          </div>
+          <span className="rounded border border-emerald-300 bg-white px-2 py-0.5 font-mono text-xs text-emerald-900">
+            {cert.certificateNumber}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={downloadingFormat !== null}
+            onClick={() => void handleDownload(cert, 'png')}
+          >
+            <FileImage className="size-4" />
+            {downloadingFormat === 'png' ? 'Rendering…' : 'Download PNG'}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={downloadingFormat !== null}
+            onClick={() => void handleDownload(cert, 'pdf')}
+          >
+            <Download className="size-4" />
+            {downloadingFormat === 'pdf' ? 'Rendering…' : 'Download PDF'}
+          </Button>
+          <Button size="sm" variant="ghost" asChild>
+            <Link href={`/verify/${cert.certificateNumber}`} target="_blank">
+              <ExternalLink className="size-4" />
+              Verify
+            </Link>
+          </Button>
+          <Button size="sm" variant="link" asChild>
+            <Link href="/student/certificates">View all certificates</Link>
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.state === 'ELIGIBLE') {
+    return (
+      <div className="mt-1 grid gap-2.5 rounded-lg border border-amber-200 bg-amber-50/70 p-3.5">
+        <div className="flex items-center gap-2 text-sm font-semibold text-amber-950">
+          <Award className="size-4 text-amber-700" />
+          Eligible for Official Certificate
+        </div>
+        <p className="type-caption text-amber-900/90">
+          You have completed all required lessons and assessments. Claim your verified credential
+          now.
+        </p>
+        <div>
+          <Button type="button" size="sm" disabled={claiming} onClick={() => void handleClaim()}>
+            <Award className="size-4" />
+            {claiming ? 'Issuing Certificate…' : 'Claim Certificate'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.reasons.length > 0) {
+    return (
+      <div className="mt-1 grid gap-1 rounded-lg border border-border bg-muted/40 p-3">
+        <p className="flex items-center gap-1.5 text-xs font-semibold text-heading">
+          <Award className="size-3.5 text-muted-foreground" />
+          Certificate Requirements Remaining
+        </p>
+        <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+          {data.reasons.slice(0, 3).map((r) => (
+            <li key={r.code}>{r.message}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  return null;
 }

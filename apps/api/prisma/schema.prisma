@@ -108,6 +108,30 @@ enum CertificateStatus {
   @@map("certificate_status")
 }
 
+/// Originating platform module or manual workflow for an issued certificate.
+enum CertificateSourceType {
+  COURSE
+  ACADEMY_QUIZ
+  COMPETITION
+  EXAM
+  EVENT
+  WORKSHOP
+  TRAINING
+  MANUAL
+  CUSTOM
+
+  @@map("certificate_source_type")
+}
+
+/// Visual layout identity of a reusable certificate template.
+enum CertificateTemplateStyle {
+  CLASSIC_INSTITUTIONAL
+  MODERN_MINIMAL
+  PREMIUM_ACHIEVEMENT
+
+  @@map("certificate_template_style")
+}
+
 // =============================================================================
 // Identity & access control
 // =============================================================================
@@ -151,13 +175,20 @@ model User {
   answersGraded         AttemptQuestion[]    @relation("AttemptQuestionGradedBy")
   assessmentAuditLogs   AssessmentAuditLog[] @relation("AuditActor")
 
-  orders             Order[]           @relation("OrderStudent")
-  payments           Payment[]         @relation("PaymentStudent")
-  refundsRequested   Refund[]          @relation("RefundRequestedBy")
-  paymentAuditLogs   PaymentAuditLog[] @relation("PaymentAuditActor")
-  adminAuditLogs     AdminAuditLog[]   @relation("AdminAuditActor")
-  certificates       Certificate[]     @relation("CertificateStudent")
-  certificatesIssued Certificate[]     @relation("CertificateIssuedBy")
+  orders                       Order[]                @relation("OrderStudent")
+  payments                     Payment[]              @relation("PaymentStudent")
+  refundsRequested             Refund[]               @relation("RefundRequestedBy")
+  paymentAuditLogs             PaymentAuditLog[]      @relation("PaymentAuditActor")
+  adminAuditLogs               AdminAuditLog[]        @relation("AdminAuditActor")
+  certificates                 Certificate[]          @relation("CertificateStudent")
+  certificatesIssued           Certificate[]          @relation("CertificateIssuedBy")
+  certificatesRevoked          Certificate[]          @relation("CertificateRevokedBy")
+  certificateTemplatesCreated  CertificateTemplate[]  @relation("TemplateCreatedBy")
+  certificateTemplatesUpdated  CertificateTemplate[]  @relation("TemplateUpdatedBy")
+  certificateSignaturesCreated CertificateSignature[] @relation("SignatureCreatedBy")
+  certificateSignaturesUpdated CertificateSignature[] @relation("SignatureUpdatedBy")
+  certificateSettingsUpdated   CertificateSettings[]  @relation("CertificateSettingsUpdatedBy")
+  certificateAuditLogs         CertificateAuditLog[]  @relation("CertificateAuditActor")
 
   jobsCreated               Job[]                         @relation("JobCreatedBy")
   jobsUpdated               Job[]                         @relation("JobUpdatedBy")
@@ -1013,10 +1044,11 @@ model Examination {
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  course    Course               @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  createdBy User?                @relation("ExaminationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  questions AssessmentQuestion[]
-  attempts  AssessmentAttempt[]
+  course       Course               @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy    User?                @relation("ExaminationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  questions    AssessmentQuestion[]
+  attempts     AssessmentAttempt[]
+  certificates Certificate[]
 
   @@index([courseId, opensAt])
   @@index([status, closesAt])
@@ -1340,10 +1372,11 @@ model AcademyQuiz {
   createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  bannerMedia AssessmentMedia?     @relation("AcademyQuizBanner", fields: [bannerMediaId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  createdBy   User?                @relation("AcademyQuizCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  questions   AssessmentQuestion[]
-  attempts    AssessmentAttempt[]
+  bannerMedia  AssessmentMedia?     @relation("AcademyQuizBanner", fields: [bannerMediaId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy    User?                @relation("AcademyQuizCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  questions    AssessmentQuestion[]
+  attempts     AssessmentAttempt[]
+  certificates Certificate[]
 
   @@index([status, startsAt])
   @@index([status, endsAt])
@@ -1747,45 +1780,215 @@ model AdminAuditLog {
 }
 
 // =============================================================================
-// Certificate System (PHASE 13) — see docs/CERTIFICATE-SYSTEM.md
+// Certificate System (PHASE 13 + Generic Certificate Management Module) — see docs/CERTIFICATE-SYSTEM.md
 // =============================================================================
 
-/// A durable, verifiable credential issued upon successful course completion.
-/// One certificate per qualifying enrollment (enforced via unique enrollmentId).
-model Certificate {
-  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  /// Unique public credential code, e.g. "ASRA-2026-XXXX-XXXX" (CHECK `certificates_certificate_number_format`).
-  certificateNumber String            @unique @map("certificate_number") @db.VarChar(50)
-  enrollmentId      String            @unique @map("enrollment_id") @db.Uuid
-  userId            String            @map("user_id") @db.Uuid
-  courseId          String            @map("course_id") @db.Uuid
-  /// Recipient's full name at the time of issue (frozen snapshot for audit and printing).
-  recipientName     String            @map("recipient_name") @db.VarChar(150)
-  /// Course title at the time of issue (frozen snapshot).
-  courseTitle       String            @map("course_title") @db.VarChar(200)
-  /// Historical completion date recorded on the qualifying enrolment.
-  completedAt       DateTime          @map("completed_at") @db.Timestamptz(3)
-  /// Timestamp when the certificate was issued.
-  issuedAt          DateTime          @default(now()) @map("issued_at") @db.Timestamptz(3)
-  status            CertificateStatus @default(ISSUED)
-  revokedAt         DateTime?         @map("revoked_at") @db.Timestamptz(3)
-  revokedReason     String?           @map("revoked_reason") @db.VarChar(500)
-  metadata          Json?
-  /// Administrator who issued or re-issued this certificate (null if issued automatically by LMS).
-  issuedById        String?           @map("issued_by_id") @db.Uuid
-  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt         DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+/// Reusable, database-backed certificate layout template (Classic, Modern, Premium).
+model CertificateTemplate {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key              String                   @unique @db.VarChar(60)
+  name             String                   @db.VarChar(120)
+  style            CertificateTemplateStyle
+  description      String?                  @db.VarChar(500)
+  defaultTitle     String                   @map("default_title") @db.VarChar(160)
+  defaultSubtitle  String?                  @map("default_subtitle") @db.VarChar(200)
+  defaultBodyText  String                   @map("default_body_text") @db.VarChar(1000)
+  issuingAuthority String                   @default("ASRA Academy") @map("issuing_authority") @db.VarChar(160)
+  config           Json                     @default("{}")
+  version          Int                      @default(1)
+  isActive         Boolean                  @default(true) @map("is_active")
+  isDefault        Boolean                  @default(false) @map("is_default")
+  createdById      String?                  @map("created_by_id") @db.Uuid
+  updatedById      String?                  @map("updated_by_id") @db.Uuid
+  createdAt        DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  user       User       @relation("CertificateStudent", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  course     Course     @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  issuedBy   User?      @relation("CertificateIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy         User?                          @relation("TemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  updatedBy         User?                          @relation("TemplateUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  signatures        CertificateTemplateSignature[]
+  certificates      Certificate[]
+  defaultInSettings CertificateSettings[]          @relation("DefaultCertificateTemplate")
+
+  @@index([isActive, isDefault])
+  @@index([createdById])
+  @@index([updatedById])
+  @@map("certificate_templates")
+}
+
+/// Admin-managed digital signature bound to a real signatory person and free-text official title.
+model CertificateSignature {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fullName        String   @map("full_name") @db.VarChar(150)
+  designation     String   @db.VarChar(150)
+  department      String?  @db.VarChar(150)
+  storageProvider String   @map("storage_provider") @db.VarChar(30)
+  storageKey      String   @map("storage_key") @db.VarChar(255)
+  imageUrl        String?  @map("image_url") @db.VarChar(2048)
+  mimeType        String   @default("image/png") @map("mime_type") @db.VarChar(50)
+  width           Int
+  height          Int
+  bytes           Int
+  hasTransparency Boolean  @default(true) @map("has_transparency")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdById     String?  @map("created_by_id") @db.Uuid
+  updatedById     String?  @map("updated_by_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy User?                          @relation("SignatureCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  updatedBy User?                          @relation("SignatureUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  templates CertificateTemplateSignature[]
+
+  @@index([isActive, createdAt])
+  @@index([createdById])
+  @@index([updatedById])
+  @@map("certificate_signatures")
+}
+
+/// Ordered signature placement configuration on a certificate template (2 to 4 unique active signatures).
+model CertificateTemplateSignature {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId      String   @map("template_id") @db.Uuid
+  signatureId     String   @map("signature_id") @db.Uuid
+  sortOrder       Int      @map("sort_order")
+  positionLabel   String   @map("position_label") @db.VarChar(40)
+  showName        Boolean  @default(true) @map("show_name")
+  showDesignation Boolean  @default(true) @map("show_designation")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  template  CertificateTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  signature CertificateSignature @relation(fields: [signatureId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([templateId, signatureId])
+  @@unique([templateId, sortOrder])
+  @@index([signatureId])
+  @@map("certificate_template_signatures")
+}
+
+/// Singleton platform certificate branding, verification notice, and auto-issuance settings.
+model CertificateSettings {
+  id                          String   @id @default("default") @db.VarChar(32)
+  academyName                 String   @default("ASRA Academy") @map("academy_name") @db.VarChar(160)
+  academyTagline              String   @default("Academy of Islamic & Contemporary Studies") @map("academy_tagline") @db.VarChar(220)
+  defaultTemplateId           String?  @map("default_template_id") @db.Uuid
+  verificationNotice          String   @default("Tamper-resistant credential registered in ASRA Academy central database.") @map("verification_notice") @db.VarChar(500)
+  showQrOnCertificates        Boolean  @default(true) @map("show_qr_on_certificates")
+  autoIssueOnCourseCompletion Boolean  @default(true) @map("auto_issue_on_course_completion")
+  autoIssueOnQuizCompletion   Boolean  @default(false) @map("auto_issue_on_quiz_completion")
+  updatedById                 String?  @map("updated_by_id") @db.Uuid
+  updatedAt                   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  defaultTemplate CertificateTemplate? @relation("DefaultCertificateTemplate", fields: [defaultTemplateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  updatedBy       User?                @relation("CertificateSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([defaultTemplateId])
+  @@index([updatedById])
+  @@map("certificate_settings")
+}
+
+/// A durable, verifiable credential issued across courses, quizzes, competitions, exams, events, workshops, or manual generation.
+/// Preserves immutable template and signature snapshots so historical certificates never drift.
+model Certificate {
+  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Unique public credential code, e.g. "ASRA-2026-XXXX-XXXX" (CHECK `certificates_certificate_number_format`).
+  certificateNumber    String                @unique @map("certificate_number") @db.VarChar(50)
+  enrollmentId         String?               @unique @map("enrollment_id") @db.Uuid
+  userId               String?               @map("user_id") @db.Uuid
+  courseId             String?               @map("course_id") @db.Uuid
+  academyQuizId        String?               @map("academy_quiz_id") @db.Uuid
+  examinationId        String?               @map("examination_id") @db.Uuid
+  sourceType           CertificateSourceType @default(COURSE) @map("source_type")
+  sourceReferenceId    String?               @map("source_reference_id") @db.VarChar(120)
+  sourceLabel          String?               @map("source_label") @db.VarChar(120)
+  idempotencyKey       String?               @unique @map("idempotency_key") @db.VarChar(180)
+  templateId           String?               @map("template_id") @db.Uuid
+  /// Recipient's full name at the time of issue (frozen snapshot for audit and printing).
+  recipientName        String                @map("recipient_name") @db.VarChar(150)
+  recipientEmail       String?               @map("recipient_email") @db.VarChar(320)
+  recipientStudentCode String?               @map("recipient_student_code") @db.VarChar(50)
+  certificateTitle     String                @default("Certificate of Completion") @map("certificate_title") @db.VarChar(160)
+  /// Subject / course / achievement title at the time of issue (frozen snapshot).
+  courseTitle          String                @map("course_title") @db.VarChar(200)
+  description          String?               @db.Text
+  achievementDetails   String?               @map("achievement_details") @db.VarChar(500)
+  /// Historical completion / achievement date recorded on the credential.
+  completedAt          DateTime              @default(now()) @map("completed_at") @db.Timestamptz(3)
+  /// Timestamp when the certificate was issued.
+  issuedAt             DateTime              @default(now()) @map("issued_at") @db.Timestamptz(3)
+  status               CertificateStatus     @default(ISSUED)
+  revokedAt            DateTime?             @map("revoked_at") @db.Timestamptz(3)
+  revokedReason        String?               @map("revoked_reason") @db.VarChar(500)
+  revokedById          String?               @map("revoked_by_id") @db.Uuid
+  metadata             Json?
+  templateSnapshot     Json?                 @map("template_snapshot")
+  signatureSnapshots   Json?                 @map("signature_snapshots")
+  reissuedFromId       String?               @map("reissued_from_id") @db.Uuid
+  /// Administrator who issued or re-issued this certificate (null if issued automatically by platform).
+  issuedById           String?               @map("issued_by_id") @db.Uuid
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  enrollment   Enrollment?              @relation(fields: [enrollmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user         User?                    @relation("CertificateStudent", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  course       Course?                  @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  academyQuiz  AcademyQuiz?             @relation(fields: [academyQuizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  examination  Examination?             @relation(fields: [examinationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  template     CertificateTemplate?     @relation(fields: [templateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  issuedBy     User?                    @relation("CertificateIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  revokedBy    User?                    @relation("CertificateRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reissuedFrom Certificate?             @relation("CertificateReissue", fields: [reissuedFromId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reissues     Certificate[]            @relation("CertificateReissue")
+  verification CertificateVerification?
+  auditLogs    CertificateAuditLog[]
 
   @@index([userId, status, issuedAt])
   @@index([courseId, status])
+  @@index([academyQuizId, status])
+  @@index([examinationId, status])
+  @@index([sourceType, status, issuedAt])
+  @@index([templateId])
   @@index([status, issuedAt])
   @@index([issuedById])
+  @@index([revokedById])
+  @@index([reissuedFromId])
   @@map("certificates")
+}
+
+/// Public verification record & telemetry ledger for an issued certificate (1:1).
+model CertificateVerification {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  certificateId    String    @unique @map("certificate_id") @db.Uuid
+  verificationCode String    @unique @map("verification_code") @db.VarChar(50)
+  qrPayloadUrl     String    @map("qr_payload_url") @db.VarChar(500)
+  verifiedCount    Int       @default(0) @map("verified_count")
+  lastVerifiedAt   DateTime? @map("last_verified_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  certificate Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("certificate_verifications")
+}
+
+/// Append-only audit log for certificate templates, signatures, issuance, reissue, revocation, and settings.
+model CertificateAuditLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  action        String   @db.VarChar(80)
+  actorId       String?  @map("actor_id") @db.Uuid
+  entityType    String   @map("entity_type") @db.VarChar(40)
+  entityId      String   @map("entity_id") @db.VarChar(64)
+  certificateId String?  @map("certificate_id") @db.Uuid
+  data          Json?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  actor       User?        @relation("CertificateAuditActor", fields: [actorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  certificate Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([certificateId, createdAt])
+  @@index([actorId])
+  @@map("certificate_audit_logs")
 }
 
 // =============================================================================

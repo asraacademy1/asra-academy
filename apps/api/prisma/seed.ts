@@ -4,13 +4,14 @@
  * Seeds ONLY foundational reference data and is safe to run repeatedly:
  *   - system roles: SUPER_ADMIN, ADMIN, FACULTY, STUDENT
  *   - the initial permission catalogue and role → permission grants
+ *   - the three default certificate templates and singleton certificate settings
  *
- * It deliberately creates NO user accounts (no default admin, no passwords) and NO academic
- * catalogue (classes, subjects, courses): the final lists are pending client confirmation
- * (docs/CLIENT-CLARIFICATIONS.md §A–C). See docs/DATABASE.md §Seed.
+ * It deliberately creates NO user accounts (no default admin, no passwords), NO sample
+ * certificates, and NO academic catalogue (classes, subjects, courses). See docs/DATABASE.md §Seed.
  */
 import { seedAccessControl } from '../src/database/seed/access-control.seed.js';
 import { disconnectPrisma, prisma } from '../src/database/prisma.js';
+import { seedCertificateDefaults } from '../src/modules/certificates/bootstrap.js';
 
 async function main(): Promise<void> {
   const [row] = await prisma.$queryRaw<{ database: string }[]>`
@@ -18,10 +19,15 @@ async function main(): Promise<void> {
   `;
   console.log(`[seed] Seeding database "${row?.database}"`);
 
-  const result = await seedAccessControl(prisma);
+  const rbac = await seedAccessControl(prisma);
   console.log(
-    `[seed] Roles: ${result.roles} · Permissions: ${result.permissions} · ` +
-      `New role grants: ${result.grantsAdded}`,
+    `[seed] Roles: ${rbac.roles} · Permissions: ${rbac.permissions} · ` +
+      `New role grants: ${rbac.grantsAdded}`,
+  );
+
+  const certs = await seedCertificateDefaults(prisma);
+  console.log(
+    `[seed] Certificate templates: ${certs.templates} · Settings initialized: ${certs.settingsReady}`,
   );
   console.log('[seed] Done.');
 }

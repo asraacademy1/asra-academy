@@ -154,13 +154,19 @@ const VERIFIED: PublicCertificateVerificationDto = {
   valid: true,
   certificateNumber: 'ASRA-2026-F9KC-M28V',
   status: 'ISSUED',
+  sourceType: 'COURSE',
+  sourceLabel: 'Course',
+  certificateTitle: 'Certificate of Completion',
   recipientName: 'Amina Student',
   courseTitle: 'Arabic Level 1',
+  description: 'has successfully completed',
+  achievementDetails: null,
   academyName: 'ASRA Academy',
   completedAt: '2026-10-01T00:00:00.000Z',
   issuedAt: '2026-10-02T00:00:00.000Z',
   revokedAt: null,
   revokedReason: null,
+  signatories: [],
 };
 
 describe('certificate verification (PHASE 13 regression)', () => {
