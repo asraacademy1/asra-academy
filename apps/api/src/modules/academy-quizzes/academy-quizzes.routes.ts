@@ -12,6 +12,12 @@ import {
   copySourceListQuerySchema,
   questionInputSchema,
   questionOrderSchema,
+  quizCertificateBatchItemsQuerySchema,
+  quizCertificateEligibleQuerySchema,
+  quizCertificateIssuanceRequestSchema,
+  quizCertificateRetrySchema,
+  quizCertificateSamplePreviewSchema,
+  quizIssuedCertificatesQuerySchema,
   type AcademyQuizCreateInput,
   type AcademyQuizListQuery,
   type AcademyQuizPatchInput,
@@ -24,16 +30,27 @@ import {
   type CopySourceListQuery,
   type QuestionInput,
   type QuestionOrderInput,
+  type QuizCertificateBatchItemsQuery,
+  type QuizCertificateEligibleQuery,
+  type QuizCertificateIssuanceRequestInput,
+  type QuizCertificateRetryInput,
+  type QuizCertificateSamplePreviewInput,
+  type QuizIssuedCertificatesQuery,
 } from '@asra/validation';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { requirePermission } from '../../middleware/authorize.js';
+import {
+  requireAnyPermission,
+  requirePermission,
+  requireRole,
+} from '../../middleware/authorize.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import { sendSuccess } from '../../utils/api-response.js';
 import { idParamsSchema } from '../../validators/common.validators.js';
 import { academyQuizAdminService as quizzes } from './academy-quizzes.service.js';
 import { academyCopyService as copies } from './copy.service.js';
 import { academyParticipantsService as participants } from './participants.service.js';
+import { quizCertificatesService as quizCertificates } from './quiz-certificates.service.js';
 import { academyResultsService as results } from './results.service.js';
 
 /**
@@ -226,5 +243,191 @@ r.get(
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.status(200).send(csv);
+  },
+);
+
+// --- Quiz Certificate Generation & Bulk Issuance (ADMIN / SUPER_ADMIN only) -----------------
+
+const adminOnly = requireRole('ADMIN', 'SUPER_ADMIN');
+const canViewQuizCertificates = requireAnyPermission(
+  PERMISSIONS.CERTIFICATES_VIEW,
+  PERMISSIONS.CERTIFICATES_ISSUE,
+  PERMISSIONS.CERTIFICATES_MANAGE,
+);
+const canIssueQuizCertificates = requireAnyPermission(
+  PERMISSIONS.CERTIFICATES_ISSUE,
+  PERMISSIONS.CERTIFICATES_MANAGE,
+);
+const batchParamsSchema = idParamsSchema.extend({ batchId: z.uuid() });
+
+r.get(
+  '/academy-quizzes/:id/certificates/summary',
+  adminOnly,
+  manage,
+  canViewQuizCertificates,
+  byId,
+  async (req: Request, res: Response) => {
+    sendSuccess(res, await quizCertificates.getSummary(id(req)));
+  },
+);
+
+r.get(
+  '/academy-quizzes/:id/certificates/eligible',
+  adminOnly,
+  manage,
+  canViewQuizCertificates,
+  validateRequest({ params: idParamsSchema, query: quizCertificateEligibleQuerySchema }),
+  async (req: Request, res: Response) => {
+    sendSuccess(
+      res,
+      await quizCertificates.listEligible(
+        id(req),
+        req.query as unknown as QuizCertificateEligibleQuery,
+      ),
+    );
+  },
+);
+
+r.post(
+  '/academy-quizzes/:id/certificates/preview',
+  adminOnly,
+  manage,
+  canIssueQuizCertificates,
+  withBody(quizCertificateIssuanceRequestSchema),
+  async (req: Request, res: Response) => {
+    sendSuccess(
+      res,
+      await quizCertificates.previewIssuance(
+        id(req),
+        req.body as QuizCertificateIssuanceRequestInput,
+      ),
+    );
+  },
+);
+
+const samplePreviewQuerySchema = z.object({
+  templateId: z.uuid(),
+  rank: z.coerce.number().int().min(1).max(1000).optional(),
+  category: z.enum(['PARTICIPATION', 'RANK']).default('PARTICIPATION'),
+  format: z.enum(['pdf', 'png']).default('pdf'),
+});
+
+r.get(
+  '/academy-quizzes/:id/certificates/sample-preview',
+  adminOnly,
+  manage,
+  canViewQuizCertificates,
+  validateRequest({ params: idParamsSchema, query: samplePreviewQuerySchema }),
+  async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof samplePreviewQuerySchema>;
+    const doc = await quizCertificates.generateSamplePreview(id(req), {
+      templateId: q.templateId,
+      rank: q.rank ?? null,
+      category: q.category,
+      format: q.format,
+    });
+    res.setHeader('Content-Type', doc.mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${doc.filename}"`);
+    res.setHeader('Content-Length', doc.buffer.length);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(doc.buffer);
+  },
+);
+
+r.post(
+  '/academy-quizzes/:id/certificates/sample-preview',
+  adminOnly,
+  manage,
+  canViewQuizCertificates,
+  withBody(quizCertificateSamplePreviewSchema),
+  async (req: Request, res: Response) => {
+    const doc = await quizCertificates.generateSamplePreview(
+      id(req),
+      req.body as QuizCertificateSamplePreviewInput,
+    );
+    res.setHeader('Content-Type', doc.mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${doc.filename}"`);
+    res.setHeader('Content-Length', doc.buffer.length);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(doc.buffer);
+  },
+);
+
+r.post(
+  '/academy-quizzes/:id/certificates/issue',
+  adminOnly,
+  manage,
+  canIssueQuizCertificates,
+  withBody(quizCertificateIssuanceRequestSchema),
+  async (req: Request, res: Response) => {
+    const detail = await quizCertificates.startBulkIssuance(
+      req.auth!,
+      id(req),
+      req.body as QuizCertificateIssuanceRequestInput,
+    );
+    sendSuccess(res, detail, 'Bulk certificate issuance started', 202);
+  },
+);
+
+r.get(
+  '/academy-quizzes/:id/certificates/batches',
+  adminOnly,
+  manage,
+  canViewQuizCertificates,
+  byId,
+  async (req: Request, res: Response) => {
+    sendSuccess(res, await quizCertificates.listBatches(id(req)));
+  },
+);
+
+r.get(
+  '/academy-quizzes/:id/certificates/batches/:batchId',
+  adminOnly,
+  manage,
+  canViewQuizCertificates,
+  validateRequest({ params: batchParamsSchema, query: quizCertificateBatchItemsQuerySchema }),
+  async (req: Request, res: Response) => {
+    sendSuccess(
+      res,
+      await quizCertificates.getBatchDetail(
+        id(req),
+        String(req.params.batchId),
+        req.query as unknown as QuizCertificateBatchItemsQuery,
+      ),
+    );
+  },
+);
+
+r.post(
+  '/academy-quizzes/:id/certificates/batches/:batchId/retry',
+  adminOnly,
+  manage,
+  canIssueQuizCertificates,
+  validateRequest({ params: batchParamsSchema, body: quizCertificateRetrySchema }),
+  async (req: Request, res: Response) => {
+    const detail = await quizCertificates.retryBatch(
+      req.auth!,
+      id(req),
+      String(req.params.batchId),
+      req.body as QuizCertificateRetryInput,
+    );
+    sendSuccess(res, detail, 'Retry queued', 202);
+  },
+);
+
+r.get(
+  '/academy-quizzes/:id/certificates/issued',
+  adminOnly,
+  manage,
+  canViewQuizCertificates,
+  validateRequest({ params: idParamsSchema, query: quizIssuedCertificatesQuerySchema }),
+  async (req: Request, res: Response) => {
+    sendSuccess(
+      res,
+      await quizCertificates.listIssuedCertificates(
+        id(req),
+        req.query as unknown as QuizIssuedCertificatesQuery,
+      ),
+    );
   },
 );

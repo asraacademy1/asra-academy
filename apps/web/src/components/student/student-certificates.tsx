@@ -54,12 +54,30 @@ export function StudentCertificatesGallery() {
   const [sourceType, setSourceType] = React.useState<CertificateSourceType | ''>('');
   const [downloadingKey, setDownloadingKey] = React.useState<string | null>(null);
   const [previewCert, setPreviewCert] = React.useState<CertificateDto | null>(null);
+  const handledDeepLinkRef = React.useRef(false);
 
   const url = withPage('/student/certificates', page, {
     ...(search.trim() ? { search: search.trim() } : {}),
     ...(sourceType ? { sourceType } : {}),
   });
   const list = useApiResource(url, () => api.get<Paginated<CertificateDto>>(url));
+
+  React.useEffect(() => {
+    if (handledDeepLinkRef.current || typeof window === 'undefined') return;
+    const certId = new URLSearchParams(window.location.search).get('certificateId');
+    if (!certId) return;
+    handledDeepLinkRef.current = true;
+    let active = true;
+    void api
+      .get<CertificateDto>(`/student/certificates/${encodeURIComponent(certId)}`)
+      .then((cert) => {
+        if (active) setPreviewCert(cert);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [api]);
 
   const handleDownload = async (cert: CertificateDto, format: 'pdf' | 'png') => {
     const key = `${cert.id}:${format}`;
@@ -223,26 +241,30 @@ export function StudentCertificatesGallery() {
                         <Eye className="size-4" />
                         Preview
                       </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={downloadingKey === `${item.id}:png`}
-                        onClick={() => void handleDownload(item, 'png')}
-                      >
-                        <FileImage className="size-4" />
-                        {downloadingKey === `${item.id}:png` ? 'Rendering...' : 'Download PNG'}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={downloadingKey === `${item.id}:pdf`}
-                        onClick={() => void handleDownload(item, 'pdf')}
-                      >
-                        <Download className="size-4" />
-                        {downloadingKey === `${item.id}:pdf` ? 'Rendering...' : 'Download PDF'}
-                      </Button>
+                      {(!item.issuedFormats || item.issuedFormats.includes('PNG')) && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={downloadingKey === `${item.id}:png`}
+                          onClick={() => void handleDownload(item, 'png')}
+                        >
+                          <FileImage className="size-4" />
+                          {downloadingKey === `${item.id}:png` ? 'Rendering...' : 'Download PNG'}
+                        </Button>
+                      )}
+                      {(!item.issuedFormats || item.issuedFormats.includes('PDF')) && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={downloadingKey === `${item.id}:pdf`}
+                          onClick={() => void handleDownload(item, 'pdf')}
+                        >
+                          <Download className="size-4" />
+                          {downloadingKey === `${item.id}:pdf` ? 'Rendering...' : 'Download PDF'}
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" asChild>
                         <Link href={`/verify/${item.certificateNumber}`} target="_blank">
                           <ExternalLink className="size-4" />
@@ -281,23 +303,27 @@ export function StudentCertificatesGallery() {
                     <ExternalLink className="size-4" /> Public Verification Link
                   </Link>
                 </Button>
-                <Button
-                  variant="outline"
-                  disabled={downloadingKey === `${previewCert.id}:png`}
-                  onClick={() => void handleDownload(previewCert, 'png')}
-                >
-                  <FileImage className="size-4" />
-                  {downloadingKey === `${previewCert.id}:png` ? 'Rendering...' : 'Download PNG'}
-                </Button>
-                <Button
-                  disabled={downloadingKey === `${previewCert.id}:pdf`}
-                  onClick={() => void handleDownload(previewCert, 'pdf')}
-                >
-                  <Download className="size-4" />
-                  {downloadingKey === `${previewCert.id}:pdf`
-                    ? 'Rendering...'
-                    : 'Download Official PDF'}
-                </Button>
+                {(!previewCert.issuedFormats || previewCert.issuedFormats.includes('PNG')) && (
+                  <Button
+                    variant="outline"
+                    disabled={downloadingKey === `${previewCert.id}:png`}
+                    onClick={() => void handleDownload(previewCert, 'png')}
+                  >
+                    <FileImage className="size-4" />
+                    {downloadingKey === `${previewCert.id}:png` ? 'Rendering...' : 'Download PNG'}
+                  </Button>
+                )}
+                {(!previewCert.issuedFormats || previewCert.issuedFormats.includes('PDF')) && (
+                  <Button
+                    disabled={downloadingKey === `${previewCert.id}:pdf`}
+                    onClick={() => void handleDownload(previewCert, 'pdf')}
+                  >
+                    <Download className="size-4" />
+                    {downloadingKey === `${previewCert.id}:pdf`
+                      ? 'Rendering...'
+                      : 'Download Official PDF'}
+                  </Button>
+                )}
               </DialogFooter>
             </div>
           )}

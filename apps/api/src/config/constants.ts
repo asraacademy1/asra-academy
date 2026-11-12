@@ -118,6 +118,11 @@ export const MEETING_CLAIM_LEASE_MS = 2 * 60_000;
 
 // --- Certificates (PHASE 13) ----------------------------------------------------------------
 
+/** How often the API process sweeps pending/abandoned quiz certificate issuance items. */
+export const QUIZ_CERT_SWEEP_MS = 15_000;
+/** Claim lease for quiz certificate generation / email workers before another process may take over. */
+export const QUIZ_CERT_CLAIM_LEASE_MS = 5 * 60_000;
+
 /** Per-IP limits for public certificate verification endpoint (fixed 1-minute window). */
 export const CERTIFICATE_RATE_LIMITS = {
   verify: { windowMinutes: 1, limit: 60 },

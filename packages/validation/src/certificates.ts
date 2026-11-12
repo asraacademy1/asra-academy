@@ -335,3 +335,119 @@ export const SOURCE_TYPE_LABELS: Record<CertificateSourceType, string> = {
   MANUAL: 'Manual',
   CUSTOM: 'Custom',
 };
+
+// =============================================================================
+// Quiz Certificate Generation & Bulk Issuance Validation
+// =============================================================================
+
+export const quizCertificateRecipientModeSchema = z.enum([
+  'ALL_PARTICIPANTS',
+  'RANKERS_ONLY',
+  'SELECTED_RANKS',
+  'INDIVIDUAL_PARTICIPANTS',
+]);
+
+export const quizCertificateFormatSchema = z.enum(['PDF', 'PNG', 'BOTH']);
+
+export const quizCertificateCategorySchema = z.enum(['PARTICIPATION', 'RANK']);
+
+export const quizCertificateTemplateAssignmentSchema = z.object({
+  participationTemplateId: uuidSchema.nullable().optional(),
+  rank1TemplateId: uuidSchema.nullable().optional(),
+  rank2TemplateId: uuidSchema.nullable().optional(),
+  rank3TemplateId: uuidSchema.nullable().optional(),
+  otherRankTemplateId: uuidSchema.nullable().optional(),
+  issueRankCertificatesToTopRankers: z.boolean().optional().default(true),
+});
+
+export const quizCertificateEligibleQuerySchema = z.object({
+  mode: quizCertificateRecipientModeSchema.optional(),
+  topN: z.coerce.number().int().min(1).max(1000).optional(),
+  rankFrom: z.coerce.number().int().min(1).max(1000).optional(),
+  rankTo: z.coerce.number().int().min(1).max(1000).optional(),
+  ranks: z.string().trim().max(500).optional(),
+  search: z.string().trim().max(100).optional(),
+});
+
+export type QuizCertificateEligibleQuery = z.infer<typeof quizCertificateEligibleQuerySchema>;
+
+export const quizCertificateIssuanceRequestSchema = z
+  .object({
+    recipientMode: quizCertificateRecipientModeSchema,
+    topN: z.number().int().min(1).max(1000).optional().nullable(),
+    rankFrom: z.number().int().min(1).max(1000).optional().nullable(),
+    rankTo: z.number().int().min(1).max(1000).optional().nullable(),
+    selectedRanks: z.array(z.number().int().min(1).max(1000)).max(200).optional().default([]),
+    selectedUserIds: z.array(uuidSchema).max(2000).optional().default([]),
+    individualCategory: quizCertificateCategorySchema.optional().default('PARTICIPATION'),
+    templates: quizCertificateTemplateAssignmentSchema,
+    format: quizCertificateFormatSchema.default('BOTH'),
+    sendEmail: z.boolean().default(true),
+    showInStudentDashboard: z.boolean().default(true),
+  })
+  .superRefine((val, ctx) => {
+    if (val.recipientMode === 'RANKERS_ONLY') {
+      const hasTopN = typeof val.topN === 'number' && val.topN >= 1;
+      const hasRange =
+        typeof val.rankFrom === 'number' &&
+        typeof val.rankTo === 'number' &&
+        val.rankFrom >= 1 &&
+        val.rankTo >= val.rankFrom;
+      if (!hasTopN && !hasRange) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['topN'],
+          message: 'Specify a Top N limit or a valid rank range (from/to).',
+        });
+      }
+    }
+    if (val.recipientMode === 'SELECTED_RANKS' && val.selectedRanks.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['selectedRanks'],
+        message: 'Select at least one rank.',
+      });
+    }
+    if (val.recipientMode === 'INDIVIDUAL_PARTICIPANTS' && val.selectedUserIds.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['selectedUserIds'],
+        message: 'Select at least one eligible participant.',
+      });
+    }
+  });
+
+export type QuizCertificateIssuanceRequestInput = z.infer<
+  typeof quizCertificateIssuanceRequestSchema
+>;
+
+export const quizCertificateSamplePreviewSchema = z.object({
+  templateId: uuidSchema,
+  rank: z.number().int().min(1).max(1000).nullable().optional(),
+  category: quizCertificateCategorySchema.default('PARTICIPATION'),
+  format: z.enum(['pdf', 'png']).default('pdf'),
+});
+
+export type QuizCertificateSamplePreviewInput = z.infer<typeof quizCertificateSamplePreviewSchema>;
+
+export const quizCertificateRetrySchema = z.object({
+  scope: z.enum(['FAILED_GENERATIONS', 'FAILED_EMAILS', 'ALL_FAILED']).default('ALL_FAILED'),
+  itemIds: z.array(uuidSchema).max(500).optional(),
+});
+
+export type QuizCertificateRetryInput = z.infer<typeof quizCertificateRetrySchema>;
+
+export const quizCertificateBatchItemsQuerySchema = z.object({
+  generationStatus: z.enum(['PENDING', 'PROCESSING', 'GENERATED', 'FAILED']).optional(),
+  emailStatus: z.enum(['NOT_REQUESTED', 'PENDING', 'SENDING', 'SENT', 'FAILED']).optional(),
+  search: z.string().trim().max(100).optional(),
+});
+
+export type QuizCertificateBatchItemsQuery = z.infer<typeof quizCertificateBatchItemsQuerySchema>;
+
+export const quizIssuedCertificatesQuerySchema = paginationQuerySchema.extend({
+  search: z.string().trim().max(100).optional(),
+  category: quizCertificateCategorySchema.optional(),
+});
+
+export type QuizIssuedCertificatesQuery = z.infer<typeof quizIssuedCertificatesQuerySchema>;

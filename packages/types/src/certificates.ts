@@ -168,6 +168,10 @@ export interface CertificateDto {
   templateSnapshot?: CertificateTemplateSnapshotDto | null;
   signatureSnapshots?: CertificateSignatureSnapshotDto[] | null;
   reissuedFromId?: string | null;
+  certificateCategory?: QuizCertificateCategory | null;
+  quizRank?: number | null;
+  issuedFormats?: ('PDF' | 'PNG')[];
+  visibleInStudentDashboard?: boolean;
   verificationUrl: string;
   downloadUrl: string;
   pngDownloadUrl?: string;
@@ -256,6 +260,10 @@ export interface AdminCertificateListItem {
   signatureCount: number;
   templateSnapshot?: CertificateTemplateSnapshotDto | null;
   signatureSnapshots?: CertificateSignatureSnapshotDto[] | null;
+  certificateCategory?: QuizCertificateCategory | null;
+  quizRank?: number | null;
+  issuedFormats?: ('PDF' | 'PNG')[];
+  visibleInStudentDashboard?: boolean;
   verificationUrl: string;
   downloadUrl?: string;
   pngDownloadUrl?: string;
@@ -300,4 +308,188 @@ export interface CertificateAuditLogItemDto {
   actor: { userId: string; fullName: string } | null;
   data: Record<string, unknown> | null;
   createdAt: string;
+}
+
+// =============================================================================
+// Quiz Certificate Generation & Bulk Issuance DTOs
+// =============================================================================
+
+export type QuizCertificateCategory = 'PARTICIPATION' | 'RANK';
+
+export type QuizCertificateRecipientMode =
+  'ALL_PARTICIPANTS' | 'RANKERS_ONLY' | 'SELECTED_RANKS' | 'INDIVIDUAL_PARTICIPANTS';
+
+export type QuizCertificateFormat = 'PDF' | 'PNG' | 'BOTH';
+
+export type QuizCertificateBatchStatus =
+  'PENDING' | 'PROCESSING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED';
+
+export type QuizCertificateGenerationStatus = 'PENDING' | 'PROCESSING' | 'GENERATED' | 'FAILED';
+
+export type QuizCertificateEmailStatus =
+  'NOT_REQUESTED' | 'PENDING' | 'SENDING' | 'SENT' | 'FAILED';
+
+export interface QuizCertificateTemplateAssignmentDto {
+  participationTemplateId?: string | null;
+  rank1TemplateId?: string | null;
+  rank2TemplateId?: string | null;
+  rank3TemplateId?: string | null;
+  otherRankTemplateId?: string | null;
+  issueRankCertificatesToTopRankers?: boolean;
+}
+
+export interface QuizCertificateBatchSummaryDto {
+  id: string;
+  quizId: string;
+  recipientMode: QuizCertificateRecipientMode;
+  format: QuizCertificateFormat;
+  sendEmail: boolean;
+  showInStudentDashboard: boolean;
+  status: QuizCertificateBatchStatus;
+  totalRecipients: number;
+  excludedDuplicates: number;
+  totalQueued: number;
+  generatedCount: number;
+  generationFailedCount: number;
+  emailsSentCount: number;
+  emailsFailedCount: number;
+  pendingGenerationCount: number;
+  pendingEmailCount: number;
+  completionPercent: number;
+  initiatedByName: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuizCertificateSummaryDto {
+  quizId: string;
+  quizTitle: string;
+  quizSlug: string;
+  status: 'DRAFT' | 'PUBLISHED' | 'CLOSED';
+  phase: 'DRAFT' | 'UPCOMING' | 'LIVE' | 'ENDED' | 'CLOSED';
+  isCompleted: boolean;
+  completionStatusLabel: string;
+  pendingFinalization: number;
+  totalEligibleParticipants: number;
+  totalEligibleRankers: number;
+  alreadyIssuedCount: number;
+  issuedParticipationCount: number;
+  issuedRankCount: number;
+  pendingIssuanceCount: number;
+  inFlightCount: number;
+  activeValidTemplatesCount: number;
+  latestBatch: QuizCertificateBatchSummaryDto | null;
+}
+
+export interface QuizEligibleParticipantDto {
+  userId: string;
+  fullName: string;
+  email: string;
+  studentCode: string | null;
+  attemptId: string;
+  attemptNumber: number;
+  score: number;
+  maxScore: number;
+  percent: number;
+  timeTakenSeconds: number;
+  submittedAt: string;
+  rank: number;
+  alreadyIssuedParticipation: boolean;
+  participationCertificateNumber: string | null;
+  alreadyIssuedRank: boolean;
+  rankCertificateNumber: string | null;
+  inFlightParticipation: boolean;
+  inFlightRank: boolean;
+}
+
+export interface QuizEligibleParticipantsResponseDto {
+  quizId: string;
+  isCompleted: boolean;
+  pendingFinalization: number;
+  totalEligibleParticipants: number;
+  availableRanks: number[];
+  items: QuizEligibleParticipantDto[];
+}
+
+export interface QuizCertificatePreviewRecipientDto {
+  userId: string;
+  fullName: string;
+  email: string;
+  attemptId: string;
+  rank: number | null;
+  score: number;
+  maxScore: number;
+  percent: number;
+  category: QuizCertificateCategory;
+  templateId: string;
+  templateName: string;
+  excludedAsDuplicate: boolean;
+  duplicateReason: string | null;
+  existingCertificateNumber: string | null;
+}
+
+export interface QuizCertificatePreviewResponseDto {
+  quiz: { id: string; title: string; slug: string; completedAt: string };
+  recipientMode: QuizCertificateRecipientMode;
+  format: QuizCertificateFormat;
+  sendEmail: boolean;
+  showInStudentDashboard: boolean;
+  totalUniqueRecipients: number;
+  toGenerateCount: number;
+  alreadyIssuedExcludedCount: number;
+  participationTemplateName: string | null;
+  rankTemplateAssignments: {
+    label: string;
+    templateId: string;
+    templateName: string;
+  }[];
+  recipients: QuizCertificatePreviewRecipientDto[];
+  emailPreview: {
+    subject: string;
+    text: string;
+    html: string;
+  };
+}
+
+export interface QuizCertificateIssuanceItemDto {
+  id: string;
+  batchId: string;
+  userId: string;
+  recipientName: string;
+  recipientEmail: string;
+  attemptId: string;
+  templateId: string;
+  templateName: string;
+  category: QuizCertificateCategory;
+  rank: number | null;
+  score: number | null;
+  percent: number | null;
+  certificateId: string | null;
+  certificateNumber: string | null;
+  pdfReference: string | null;
+  pngReference: string | null;
+  generationStatus: QuizCertificateGenerationStatus;
+  generationAttempts: number;
+  generationError: string | null;
+  emailStatus: QuizCertificateEmailStatus;
+  emailAttempts: number;
+  emailError: string | null;
+  emailSentAt: string | null;
+  issuedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuizCertificateBatchDetailDto {
+  batch: QuizCertificateBatchSummaryDto;
+  items: QuizCertificateIssuanceItemDto[];
+  totalItems: number;
+}
+
+export interface QuizIssuedCertificateItemDto extends AdminCertificateListItem {
+  quizAttemptId: string | null;
+  emailStatus: QuizCertificateEmailStatus | null;
+  emailSentAt: string | null;
 }

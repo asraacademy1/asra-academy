@@ -111,6 +111,18 @@ async function rankedAttempts(quiz: QuizRules) {
   );
 }
 
+/**
+ * Shared finalized leaderboard ranking for one Academy Quiz (reuses the canonical best-attempt
+ * selection and competition tie-breaking logic).
+ */
+export async function rankedAttemptsForQuiz(quiz: {
+  id: string;
+  attemptCounting: 'BEST' | 'FIRST';
+  tieBreak: 'TIME_TAKEN' | 'SUBMITTED_AT';
+}) {
+  return rankedAttempts(quiz as QuizRules);
+}
+
 /** Why students cannot see the leaderboard now (null = they can). */
 function leaderboardBlocker(quiz: QuizRules, now: Date): string | null {
   if (quiz.leaderboardVisibility === 'HIDDEN') return 'This quiz does not show a leaderboard.';

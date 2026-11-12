@@ -41,6 +41,7 @@ import { errorMessage, hasPermission, useAdminApi, useApiResource } from '../use
 import { AcademyAttemptsSection, AdminLeaderboardSection } from './attempts';
 import { CopyQuestionsDialog } from './copy-questions-dialog';
 import { AcademyParticipantsSection } from './participants';
+import { QuizCertificatesSection } from './quiz-certificates-section';
 import { ADMIN_MEDIA_UPLOAD } from './quiz-form';
 import { PhaseBadge } from './quiz-list';
 
@@ -286,6 +287,8 @@ export function AcademyQuizDetail({ id }: { id: string }) {
           <AdminLeaderboardSection quizId={id} />
         </>
       )}
+
+      <QuizCertificatesSection quiz={data} />
 
       <SettingsSummary quiz={data} publicAccess={publicAccess} />
       <PrizesPreview quiz={data} />
@@ -542,5 +545,8 @@ const HISTORY_LABELS: Record<string, string> = {
   'academy_quiz.results_published': 'Results published',
   'academy_quiz.questions_copied': 'Questions copied',
   'academy_quiz.deleted': 'Deleted',
+  'quiz_certificates.bulk_issuance_started': 'Bulk certificate issuance started',
+  'quiz_certificates.retry_requested': 'Certificate issuance retry requested',
+  'quiz_certificates.batch_completed': 'Bulk certificate issuance completed',
 };
 export const historyLabel = (action: string) => HISTORY_LABELS[action] ?? action;
