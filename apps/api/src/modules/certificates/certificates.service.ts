@@ -91,6 +91,20 @@ export interface IssueCertificateEngineInput {
   metadata?: Record<string, unknown> | null;
   adminActorId?: string | null;
   notificationMessage?: string;
+  visibleInStudentDashboard?: boolean;
+  certificateCategory?: string | null;
+  quizRank?: number | null;
+  quizAttemptId?: string | null;
+  issuedFormats?: ('PDF' | 'PNG')[];
+  skipNotification?: boolean;
+  skipEmailNotification?: boolean;
+  /** Pre-allocated certificate number & snapshots when pre-rendered/verified before commit. */
+  preallocatedCertificateNumber?: string;
+  precomputedSnapshots?: {
+    templateId: string;
+    templateSnapshot: CertificateTemplateSnapshotDto;
+    signatureSnapshots: CertificateSignatureSnapshotDto[];
+  };
 }
 
 async function lockIdempotencyKey(tx: DbClient, key: string): Promise<void> {
@@ -128,7 +142,7 @@ function assertValidSignatureSnapshots(snapshots: CertificateSignatureSnapshotDt
   }
 }
 
-async function allocateCertificateNumber(tx: DbClient, year: number): Promise<string> {
+export async function allocateCertificateNumber(tx: DbClient, year: number): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const candidate = generateCertificateNumber(year);
     const taken = await tx.certificate.findUnique({
@@ -140,7 +154,7 @@ async function allocateCertificateNumber(tx: DbClient, year: number): Promise<st
   throw new AppError('INTERNAL_ERROR', 'Failed to allocate unique certificate number');
 }
 
-async function resolveTemplateAndSnapshots(
+export async function resolveTemplateAndSnapshots(
   tx: DbClient,
   input: {
     templateId?: string | null;
@@ -286,7 +300,7 @@ async function resolveTemplateAndSnapshots(
   return { templateId: template.id, templateSnapshot, signatureSnapshots };
 }
 
-async function loadSignatureBuffers(snapshots: CertificateSignatureSnapshotDto[]): Promise<{
+export async function loadSignatureBuffers(snapshots: CertificateSignatureSnapshotDto[]): Promise<{
   buffers: Map<string, Buffer>;
   missing: CertificateSignatureSnapshotDto[];
 }> {
@@ -368,7 +382,7 @@ function deriveIdempotencyKey(input: IssueCertificateEngineInput): string | null
   return null;
 }
 
-async function createCertificateInsideTx(
+export async function createCertificateInsideTx(
   tx: DbClient,
   input: IssueCertificateEngineInput,
 ): Promise<{ certificate: CertificateWithReissues; created: boolean; deliveryIds: string[] }> {
@@ -386,21 +400,22 @@ async function createCertificateInsideTx(
     }
   }
 
-  const { templateId, templateSnapshot, signatureSnapshots } = await resolveTemplateAndSnapshots(
-    tx,
-    {
-      templateId: input.templateId,
-      certificateTitle: input.certificateTitle,
-      description: input.description,
-      signatures: input.signatures,
-      requireExplicitSignatures: input.requireExplicitSignatures,
-    },
-  );
+  const { templateId, templateSnapshot, signatureSnapshots } = input.precomputedSnapshots
+    ? input.precomputedSnapshots
+    : await resolveTemplateAndSnapshots(tx, {
+        templateId: input.templateId,
+        certificateTitle: input.certificateTitle,
+        description: input.description,
+        signatures: input.signatures,
+        requireExplicitSignatures: input.requireExplicitSignatures,
+      });
   assertValidSignatureSnapshots(signatureSnapshots);
 
   const issuedAt = input.issuedAt ?? clock.now();
   const completedAt = input.completedAt ?? issuedAt;
-  const certNumber = await allocateCertificateNumber(tx, issuedAt.getUTCFullYear());
+  const certNumber =
+    input.preallocatedCertificateNumber ??
+    (await allocateCertificateNumber(tx, issuedAt.getUTCFullYear()));
   const verificationUrl = buildVerificationUrl(certNumber);
   const sourceLabel = input.sourceLabel?.trim() || SOURCE_TYPE_LABELS[input.sourceType];
 
@@ -437,6 +452,11 @@ async function createCertificateInsideTx(
       signatureSnapshots: signatureSnapshots as unknown as Prisma.InputJsonValue,
       reissuedFromId: input.reissuedFromId ?? null,
       issuedById: input.adminActorId ?? null,
+      visibleInStudentDashboard: input.visibleInStudentDashboard ?? true,
+      certificateCategory: input.certificateCategory ?? null,
+      quizRank: input.quizRank ?? null,
+      quizAttemptId: input.quizAttemptId ?? null,
+      issuedFormats: input.issuedFormats ?? ['PDF', 'PNG'],
     },
   });
 
@@ -482,7 +502,7 @@ async function createCertificateInsideTx(
   }
 
   let deliveryIds: string[] = [];
-  if (input.userId) {
+  if (input.userId && !input.skipNotification) {
     deliveryIds = await notifyUsers(tx, [input.userId], {
       type: 'CERTIFICATE',
       event: 'certificate.issued',
@@ -493,7 +513,7 @@ async function createCertificateInsideTx(
       actionUrl: '/student/certificates',
       resource: { type: 'certificate', id: createdCert.id },
       dedupeKey: `certificate:${createdCert.id}`,
-      email: true,
+      email: !input.skipEmailNotification,
       data: {
         certificateNumber: createdCert.certificateNumber,
         courseTitle: createdCert.courseTitle,
@@ -859,6 +879,24 @@ export const certificatesService = {
       );
     }
 
+    const existingParticipation = await prisma.certificate.findFirst({
+      where: {
+        academyQuizId: quiz.id,
+        userId: auth.userId,
+        status: 'ISSUED',
+        OR: [{ certificateCategory: 'PARTICIPATION' }, { certificateCategory: null }],
+      },
+      include: {
+        reissues: { select: { certificateNumber: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+    });
+    if (existingParticipation) {
+      return toCertificateDto(
+        existingParticipation,
+        await hydrateSignatureSnapshots(existingParticipation.signatureSnapshots),
+      );
+    }
+
     const pct = bestPassed.percent !== null ? Number(bestPassed.percent) : null;
     return certificatesService.issueGenericCertificate({
       sourceType: 'ACADEMY_QUIZ',
@@ -875,6 +913,8 @@ export const certificatesService = {
       achievementDetails: pct !== null ? `Score Achieved: ${pct}%` : null,
       completedAt: bestPassed.submittedAt ?? clock.now(),
       idempotencyKey: `ACADEMY_QUIZ:${quiz.id}:${auth.userId}`,
+      certificateCategory: 'PARTICIPATION',
+      quizAttemptId: bestPassed.id,
     });
   },
 
@@ -1169,6 +1209,7 @@ export const certificatesService = {
     const { skip, take } = pageArgs(query);
     const where: Prisma.CertificateWhereInput = {
       userId: auth.userId,
+      visibleInStudentDashboard: true,
       ...(query.sourceType ? { sourceType: query.sourceType } : {}),
       ...(query.search
         ? {
@@ -1209,7 +1250,7 @@ export const certificatesService = {
 
   async getStudentCertificateById(auth: AuthContext, id: string): Promise<CertificateDto> {
     const cert = await prisma.certificate.findFirst({
-      where: { id, userId: auth.userId },
+      where: { id, userId: auth.userId, visibleInStudentDashboard: true },
       include: {
         reissues: { select: { certificateNumber: true }, orderBy: { createdAt: 'desc' }, take: 1 },
       },
@@ -1333,6 +1374,23 @@ export const certificatesService = {
         auth.permissions.has(PERMISSIONS.CERTIFICATES_REVOKE);
       if (!isOwner && !canAdminViewPdf) {
         throw new AppError('FORBIDDEN', 'You do not have permission to download this certificate');
+      }
+      if (!canAdminViewPdf && cert.visibleInStudentDashboard === false) {
+        throw new AppError(
+          'FORBIDDEN',
+          'This certificate is not available in your student dashboard',
+        );
+      }
+      if (
+        !canAdminViewPdf &&
+        Array.isArray(cert.issuedFormats) &&
+        cert.issuedFormats.length > 0 &&
+        !cert.issuedFormats.includes(format.toUpperCase())
+      ) {
+        throw new AppError(
+          'BAD_REQUEST',
+          `${format.toUpperCase()} format is not enabled for this certificate.`,
+        );
       }
     }
 

@@ -188,8 +188,11 @@ model User {
   certificateTemplatesUpdated  CertificateTemplate[]  @relation("TemplateUpdatedBy")
   certificateSignaturesCreated CertificateSignature[] @relation("SignatureCreatedBy")
   certificateSignaturesUpdated CertificateSignature[] @relation("SignatureUpdatedBy")
-  certificateSettingsUpdated   CertificateSettings[]  @relation("CertificateSettingsUpdatedBy")
-  certificateAuditLogs         CertificateAuditLog[]  @relation("CertificateAuditActor")
+  certificateSettingsUpdated   CertificateSettings[]         @relation("CertificateSettingsUpdatedBy")
+  certificateAuditLogs         CertificateAuditLog[]         @relation("CertificateAuditActor")
+  quizCertificateBatchesInit   QuizCertificateIssuanceBatch[] @relation("QuizCertBatchInitiatedBy")
+  quizCertificateItemsStudent  QuizCertificateIssuanceItem[]  @relation("QuizCertItemStudent")
+  quizCertificateItemsIssuedBy QuizCertificateIssuanceItem[]  @relation("QuizCertItemIssuedBy")
 
   jobsCreated               Job[]                         @relation("JobCreatedBy")
   jobsUpdated               Job[]                         @relation("JobUpdatedBy")
@@ -1194,6 +1197,7 @@ model AssessmentAttempt {
   academyQuiz AcademyQuiz?      @relation(fields: [academyQuizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   student     User              @relation("AttemptStudent", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   questions   AttemptQuestion[]
+  quizCertificateItems QuizCertificateIssuanceItem[]
 
   @@unique([quizId, userId, attemptNumber])
   @@unique([examinationId, userId, attemptNumber])
@@ -1388,8 +1392,10 @@ model AcademyQuiz {
   createdBy     User?                     @relation("AcademyQuizCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
   questions     AssessmentQuestion[]
   attempts      AssessmentAttempt[]
-  certificates  Certificate[]
-  registrations AcademyQuizRegistration[]
+  certificates            Certificate[]
+  registrations           AcademyQuizRegistration[]
+  certificateBatches      QuizCertificateIssuanceBatch[]
+  certificateIssuanceItems QuizCertificateIssuanceItem[]
 
   @@index([status, startsAt])
   @@index([status, endsAt])
@@ -1836,9 +1842,10 @@ model CertificateTemplate {
 
   createdBy         User?                          @relation("TemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
   updatedBy         User?                          @relation("TemplateUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  signatures        CertificateTemplateSignature[]
-  certificates      Certificate[]
-  defaultInSettings CertificateSettings[]          @relation("DefaultCertificateTemplate")
+  signatures           CertificateTemplateSignature[]
+  certificates         Certificate[]
+  defaultInSettings    CertificateSettings[]          @relation("DefaultCertificateTemplate")
+  quizIssuanceItems    QuizCertificateIssuanceItem[]
 
   @@index([isActive, isDefault])
   @@index([createdById])
@@ -1954,24 +1961,30 @@ model Certificate {
   metadata             Json?
   templateSnapshot     Json?                 @map("template_snapshot")
   signatureSnapshots   Json?                 @map("signature_snapshots")
-  reissuedFromId       String?               @map("reissued_from_id") @db.Uuid
+  reissuedFromId             String?               @map("reissued_from_id") @db.Uuid
   /// Administrator who issued or re-issued this certificate (null if issued automatically by platform).
-  issuedById           String?               @map("issued_by_id") @db.Uuid
-  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  issuedById                 String?               @map("issued_by_id") @db.Uuid
+  visibleInStudentDashboard  Boolean               @default(true) @map("visible_in_student_dashboard")
+  certificateCategory        String?               @map("certificate_category") @db.VarChar(30)
+  quizRank                   Int?                  @map("quiz_rank")
+  quizAttemptId              String?               @map("quiz_attempt_id") @db.Uuid
+  issuedFormats              String[]              @default(["PDF", "PNG"]) @map("issued_formats")
+  createdAt                  DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                  DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  enrollment   Enrollment?              @relation(fields: [enrollmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  user         User?                    @relation("CertificateStudent", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  course       Course?                  @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  academyQuiz  AcademyQuiz?             @relation(fields: [academyQuizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  examination  Examination?             @relation(fields: [examinationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  template     CertificateTemplate?     @relation(fields: [templateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  issuedBy     User?                    @relation("CertificateIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  revokedBy    User?                    @relation("CertificateRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  reissuedFrom Certificate?             @relation("CertificateReissue", fields: [reissuedFromId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  reissues     Certificate[]            @relation("CertificateReissue")
-  verification CertificateVerification?
-  auditLogs    CertificateAuditLog[]
+  enrollment        Enrollment?                   @relation(fields: [enrollmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user              User?                         @relation("CertificateStudent", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  course            Course?                       @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  academyQuiz       AcademyQuiz?                  @relation(fields: [academyQuizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  examination       Examination?                  @relation(fields: [examinationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  template          CertificateTemplate?          @relation(fields: [templateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  issuedBy          User?                         @relation("CertificateIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  revokedBy         User?                         @relation("CertificateRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reissuedFrom      Certificate?                  @relation("CertificateReissue", fields: [reissuedFromId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reissues          Certificate[]                 @relation("CertificateReissue")
+  verification      CertificateVerification?
+  auditLogs         CertificateAuditLog[]
+  quizIssuanceItems QuizCertificateIssuanceItem[]
 
   @@index([userId, status, issuedAt])
   @@index([courseId, status])
@@ -2020,6 +2033,147 @@ model CertificateAuditLog {
   @@index([certificateId, createdAt])
   @@index([actorId])
   @@map("certificate_audit_logs")
+}
+
+// =============================================================================
+// Academy Quiz Bulk Certificate Issuance
+// =============================================================================
+
+enum QuizCertificateCategory {
+  PARTICIPATION
+  RANK
+
+  @@map("quiz_certificate_category")
+}
+
+enum QuizCertificateRecipientMode {
+  ALL_PARTICIPANTS
+  RANKERS_ONLY
+  SELECTED_RANKS
+  INDIVIDUAL_PARTICIPANTS
+
+  @@map("quiz_certificate_recipient_mode")
+}
+
+enum QuizCertificateFormat {
+  PDF
+  PNG
+  BOTH
+
+  @@map("quiz_certificate_format")
+}
+
+enum QuizCertificateBatchStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+
+  @@map("quiz_certificate_batch_status")
+}
+
+enum QuizCertificateGenerationStatus {
+  PENDING
+  PROCESSING
+  GENERATED
+  FAILED
+
+  @@map("quiz_certificate_generation_status")
+}
+
+enum QuizCertificateEmailStatus {
+  NOT_REQUESTED
+  PENDING
+  SENDING
+  SENT
+  FAILED
+
+  @@map("quiz_certificate_email_status")
+}
+
+/// One bulk certificate issuance job initiated by an administrator for a completed Academy Quiz.
+model QuizCertificateIssuanceBatch {
+  id                     String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId                 String                       @map("quiz_id") @db.Uuid
+  initiatedById          String?                      @map("initiated_by_id") @db.Uuid
+  recipientMode          QuizCertificateRecipientMode @map("recipient_mode")
+  format                 QuizCertificateFormat        @default(BOTH)
+  sendEmail              Boolean                      @default(true) @map("send_email")
+  showInStudentDashboard Boolean                      @default(true) @map("show_in_student_dashboard")
+  templateConfig         Json                         @default("{}") @map("template_config")
+  status                 QuizCertificateBatchStatus   @default(PENDING)
+  totalRecipients        Int                          @default(0) @map("total_recipients")
+  excludedDuplicates     Int                          @default(0) @map("excluded_duplicates")
+  totalQueued            Int                          @default(0) @map("total_queued")
+  generatedCount         Int                          @default(0) @map("generated_count")
+  generationFailedCount  Int                          @default(0) @map("generation_failed_count")
+  emailsSentCount        Int                          @default(0) @map("emails_sent_count")
+  emailsFailedCount      Int                          @default(0) @map("emails_failed_count")
+  startedAt              DateTime?                    @map("started_at") @db.Timestamptz(3)
+  completedAt            DateTime?                    @map("completed_at") @db.Timestamptz(3)
+  createdAt              DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  quiz        AcademyQuiz                   @relation(fields: [quizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  initiatedBy User?                         @relation("QuizCertBatchInitiatedBy", fields: [initiatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items       QuizCertificateIssuanceItem[]
+
+  @@index([quizId, createdAt])
+  @@index([status, createdAt])
+  @@index([initiatedById])
+  @@map("quiz_certificate_issuance_batches")
+}
+
+/// Per-recipient certificate generation and email delivery state within a bulk issuance batch.
+model QuizCertificateIssuanceItem {
+  id                     String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId                String                          @map("batch_id") @db.Uuid
+  quizId                 String                          @map("quiz_id") @db.Uuid
+  userId                 String                          @map("user_id") @db.Uuid
+  attemptId              String                          @map("attempt_id") @db.Uuid
+  templateId             String                          @map("template_id") @db.Uuid
+  category               QuizCertificateCategory
+  rank                   Int?
+  score                  Decimal?                        @db.Decimal(8, 2)
+  percent                Decimal?                        @db.Decimal(5, 2)
+  recipientName          String                          @map("recipient_name") @db.VarChar(150)
+  recipientEmail         String                          @map("recipient_email") @db.VarChar(320)
+  certificateId          String?                         @map("certificate_id") @db.Uuid
+  certificateNumber      String?                         @map("certificate_number") @db.VarChar(50)
+  pdfReference           String?                         @map("pdf_reference") @db.VarChar(255)
+  pngReference           String?                         @map("png_reference") @db.VarChar(255)
+  generationStatus       QuizCertificateGenerationStatus @default(PENDING) @map("generation_status")
+  generationAttempts     Int                             @default(0) @map("generation_attempts")
+  generationError        String?                         @map("generation_error") @db.VarChar(500)
+  claimedAt              DateTime?                       @map("claimed_at") @db.Timestamptz(3)
+  emailStatus            QuizCertificateEmailStatus      @default(NOT_REQUESTED) @map("email_status")
+  emailAttempts          Int                             @default(0) @map("email_attempts")
+  emailError             String?                         @map("email_error") @db.VarChar(500)
+  emailClaimedAt         DateTime?                       @map("email_claimed_at") @db.Timestamptz(3)
+  emailProviderMessageId String?                         @map("email_provider_message_id") @db.VarChar(120)
+  emailSentAt            DateTime?                       @map("email_sent_at") @db.Timestamptz(3)
+  issuedById             String?                         @map("issued_by_id") @db.Uuid
+  issuedAt               DateTime?                       @map("issued_at") @db.Timestamptz(3)
+  createdAt              DateTime                        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  batch       QuizCertificateIssuanceBatch @relation(fields: [batchId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  quiz        AcademyQuiz                  @relation(fields: [quizId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user        User                         @relation("QuizCertItemStudent", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  attempt     AssessmentAttempt            @relation(fields: [attemptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  template    CertificateTemplate          @relation(fields: [templateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  certificate Certificate?                 @relation(fields: [certificateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  issuedBy    User?                        @relation("QuizCertItemIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([batchId, userId, category])
+  @@index([batchId, generationStatus])
+  @@index([batchId, emailStatus])
+  @@index([quizId, userId, category])
+  @@index([generationStatus, claimedAt])
+  @@index([emailStatus, emailClaimedAt])
+  @@index([certificateId])
+  @@map("quiz_certificate_issuance_items")
 }
 
 // =============================================================================

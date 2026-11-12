@@ -412,6 +412,15 @@ export function toCertificateDto(
     templateSnapshot,
     signatureSnapshots,
     reissuedFromId: cert.reissuedFromId,
+    certificateCategory:
+      cert.certificateCategory === 'PARTICIPATION' || cert.certificateCategory === 'RANK'
+        ? cert.certificateCategory
+        : null,
+    quizRank: cert.quizRank ?? null,
+    issuedFormats: (cert.issuedFormats?.length ? cert.issuedFormats : ['PDF', 'PNG']) as (
+      'PDF' | 'PNG'
+    )[],
+    visibleInStudentDashboard: cert.visibleInStudentDashboard,
     verificationUrl: buildVerificationUrl(cert.certificateNumber),
     downloadUrl: `/api/v1/student/certificates/${cert.id}/download`,
     pngDownloadUrl: `/api/v1/student/certificates/${cert.id}/download/png`,
@@ -468,6 +477,15 @@ export function toAdminCertificateListItem(
     signatureCount: sigs.filter((s) => !s.isFallback).length || sigs.length,
     templateSnapshot,
     signatureSnapshots: sigs,
+    certificateCategory:
+      row.certificateCategory === 'PARTICIPATION' || row.certificateCategory === 'RANK'
+        ? row.certificateCategory
+        : null,
+    quizRank: row.quizRank ?? null,
+    issuedFormats: (row.issuedFormats?.length ? row.issuedFormats : ['PDF', 'PNG']) as (
+      'PDF' | 'PNG'
+    )[],
+    visibleInStudentDashboard: row.visibleInStudentDashboard,
     verificationUrl: buildVerificationUrl(row.certificateNumber),
     downloadUrl: `/api/v1/admin/certificates/${row.id}/download`,
     pngDownloadUrl: `/api/v1/admin/certificates/${row.id}/download/png`,
