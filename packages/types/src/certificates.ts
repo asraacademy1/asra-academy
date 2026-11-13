@@ -27,9 +27,27 @@ export const CERTIFICATE_TEMPLATE_STYLES = [
   'CLASSIC_INSTITUTIONAL',
   'MODERN_MINIMAL',
   'PREMIUM_ACHIEVEMENT',
+  /** ASRA QUIZORA 2026 — artwork-based Certificate of Participation (reference image background). */
+  'QUIZORA_PARTICIPATION',
+  /** ASRA QUIZORA 2026 — Certificate of Participation (Design 2), second reference artwork. */
+  'QUIZORA_PARTICIPATION_DESIGN_2',
 ] as const;
 
 export type CertificateTemplateStyle = (typeof CERTIFICATE_TEMPLATE_STYLES)[number];
+
+/**
+ * Template category (derived from the style, not stored): `QUIZ_PARTICIPATION` for the
+ * artwork-based ASRA QUIZORA template, `GENERAL` for the retired Phase 13/17 vector layouts.
+ */
+export type CertificateTemplateCategory = 'QUIZ_PARTICIPATION' | 'GENERAL';
+
+export function certificateTemplateCategoryOf(
+  style: CertificateTemplateStyle,
+): CertificateTemplateCategory {
+  return style === 'QUIZORA_PARTICIPATION' || style === 'QUIZORA_PARTICIPATION_DESIGN_2'
+    ? 'QUIZ_PARTICIPATION'
+    : 'GENERAL';
+}
 
 export interface CertificateTemplateConfigDto {
   accentColor: string;
@@ -112,6 +130,11 @@ export interface CertificateTemplateDto {
   key: string;
   name: string;
   style: CertificateTemplateStyle;
+  category: CertificateTemplateCategory;
+  /** Fixed number of signatories the layout requires (artwork templates), or null for 2–4. */
+  requiredSignatureCount: number | null;
+  /** Archived templates stay readable for history but can never be re-activated. */
+  isRetired: boolean;
   description: string | null;
   defaultTitle: string;
   defaultSubtitle: string | null;

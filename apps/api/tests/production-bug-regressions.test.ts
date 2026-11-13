@@ -9,6 +9,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it, type TestContext } from 'node:test';
 import { PERMISSIONS } from '@asra/types';
+import { QUIZORA_2026_TEMPLATE_KEY } from '@asra/validation';
 import sharp from 'sharp';
 import { createApp } from '../src/app.js';
 import { disconnectPrisma, prisma } from '../src/database/prisma.js';
@@ -26,6 +27,7 @@ const VALID_PDF = Buffer.from(
 const ADMIN_USER_ID = '11111111-1111-4111-8111-111111111111';
 const ADMIN_SESSION_ID = '22222222-2222-4222-8222-222222222222';
 const TEMPLATE_ID = '3a111111-1111-4111-8111-111111111111';
+const QUIZORA_ID = '3a111111-1111-4111-8111-111111111199';
 const APPLICATION_ID = '27191f2a-befc-47db-8caf-efa4b6c93166';
 
 function stubDelegateMethod<T extends object, K extends keyof T>(
@@ -95,14 +97,20 @@ describe('Production Bug Regressions — Certificates & Recruitment Resumes', ()
         PERMISSIONS.CERTIFICATES_VIEW,
         PERMISSIONS.CERTIFICATES_TEMPLATES_MANAGE,
       ])) as unknown as typeof prisma.authSession.findUnique);
-    stubDelegateMethod(t, prisma.certificateTemplate, 'findMany', (async () =>
-      INITIAL_CERTIFICATE_TEMPLATES.map((tpl, idx) => ({
+    // Post-replacement state: ASRA QUIZORA 2026 is the active default; the legacy layouts are
+    // archived (still previewable for historical reference, never issuable).
+    stubDelegateMethod(t, prisma.certificateTemplate, 'findMany', (async () => [
+      { id: QUIZORA_ID, key: QUIZORA_2026_TEMPLATE_KEY, isDefault: true, isActive: true },
+      ...INITIAL_CERTIFICATE_TEMPLATES.map((tpl, idx) => ({
         id: idx === 0 ? TEMPLATE_ID : `3a111111-1111-4111-8111-11111111111${idx + 2}`,
         key: tpl.key,
-        isDefault: tpl.isDefault,
-      }))) as unknown as typeof prisma.certificateTemplate.findMany);
+        isDefault: false,
+        isActive: false,
+      })),
+    ]) as unknown as typeof prisma.certificateTemplate.findMany);
     stubDelegateMethod(t, prisma.certificateSettings, 'findUnique', (async () => ({
       id: 'default',
+      defaultTemplateId: QUIZORA_ID,
     })) as unknown as typeof prisma.certificateSettings.findUnique);
     stubDelegateMethod(t, prisma.certificateTemplate, 'findUnique', (async () => ({
       id: TEMPLATE_ID,

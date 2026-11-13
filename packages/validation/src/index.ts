@@ -16,5 +16,6 @@ export * from './payments.js';
 export * from './notifications.js';
 export * from './admin.js';
 export * from './certificates.js';
+export * from './certificate-artwork.js';
 export * from './recruitment.js';
 export * from './announcements.js';

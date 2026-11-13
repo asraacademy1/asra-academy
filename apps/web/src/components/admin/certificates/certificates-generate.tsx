@@ -11,6 +11,8 @@ import {
 } from '@asra/types';
 import {
   CERTIFICATE_SIGNATURE_LIMITS,
+  isArtworkCertificateStyle,
+  artworkTemplateForStyle,
   SOURCE_TYPE_LABELS,
   type CertificateSignaturePlacementInput,
 } from '@asra/validation';
@@ -42,6 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { triggerBlobDownload } from '@/lib/certificates';
+import { absoluteUrl } from '@/lib/seo';
 import { ErrorPanel, LoadingPanel, SelectField } from '../admin-ui';
 import { errorMessage, useAdminApi, useApiResource } from '../use-admin';
 import { CertificatesHeader, signatureImageSrc } from './certificates-shell';
@@ -132,6 +135,15 @@ export function CertificatesGenerateAdmin() {
 
   const defaultTemplate = activeTemplates.find((t) => t.isDefault) ?? activeTemplates[0] ?? null;
   const selectedTemplate = activeTemplates.find((t) => t.id === templateId) ?? defaultTemplate;
+  // Artwork template (ASRA QUIZORA 2026): fixed heading, statement from the template body,
+  // never any score / achievement text, exactly the Event Coordinator + Director signatures.
+  const isArtwork = selectedTemplate ? isArtworkCertificateStyle(selectedTemplate.style) : false;
+  const slotLabels = isArtwork
+    ? artworkTemplateForStyle(selectedTemplate?.style)?.layout.signatureSlots.map(
+        (slot) => slot.label,
+      )
+    : undefined;
+  const requiredCount = selectedTemplate?.requiredSignatureCount ?? null;
   const certificateTitle =
     certificateTitleDraft ?? selectedTemplate?.defaultTitle ?? 'CERTIFICATE OF ACHIEVEMENT';
   const description =
@@ -203,6 +215,12 @@ export function CertificatesGenerateAdmin() {
       toast.error('Select a student', { description: 'Search and pick a student account first.' });
       return;
     }
+    if (requiredCount !== null && signatures.length !== requiredCount) {
+      toast.error('Signatures required', {
+        description: `This template requires exactly ${requiredCount} signatures (${slotLabels?.join(' and ')}). No certificate can be issued without them.`,
+      });
+      return;
+    }
     if (
       signatures.length < CERTIFICATE_SIGNATURE_LIMITS.minSignatures ||
       signatures.length > CERTIFICATE_SIGNATURE_LIMITS.maxSignatures
@@ -231,10 +249,10 @@ export function CertificatesGenerateAdmin() {
         academyQuizId: sourceType === 'ACADEMY_QUIZ' && linkedQuizId ? linkedQuizId : null,
         examinationId: sourceType === 'EXAM' && linkedExamId ? linkedExamId : null,
         templateId: selectedTemplate.id,
-        certificateTitle: certificateTitle.trim(),
+        certificateTitle: isArtwork ? selectedTemplate.defaultTitle : certificateTitle.trim(),
         subjectTitle: subjectTitle.trim(),
-        description: description.trim() || null,
-        achievementDetails: achievementDetails.trim() || null,
+        description: isArtwork ? null : description.trim() || null,
+        achievementDetails: isArtwork ? null : achievementDetails.trim() || null,
         completedAt: `${completedDate}T00:00:00.000Z`,
         issuedAt: `${issuedDate}T00:00:00.000Z`,
         signatures,
@@ -581,15 +599,27 @@ export function CertificatesGenerateAdmin() {
                   options={activeTemplates.map((t) => ({ value: t.id, label: t.name }))}
                 />
 
-                <Field id="gen-cert-title" label="Certificate Heading Title">
+                <Field
+                  id="gen-cert-title"
+                  label="Certificate Heading Title"
+                  hint={isArtwork ? 'Fixed by the approved certificate artwork.' : undefined}
+                >
                   <Input
-                    value={certificateTitle}
+                    value={isArtwork ? (selectedTemplate?.defaultTitle ?? '') : certificateTitle}
                     onChange={(e) => setCertificateTitleDraft(e.target.value)}
+                    disabled={isArtwork}
                     required
                   />
                 </Field>
 
-                <Field id="gen-subject" label="Course / Competition / Event / Achievement Name">
+                <Field
+                  id="gen-subject"
+                  label={
+                    isArtwork
+                      ? 'Certificate Title (replaces {title} in the statement)'
+                      : 'Course / Competition / Event / Achievement Name'
+                  }
+                >
                   <Input
                     value={subjectTitle}
                     onChange={(e) => setSubjectTitle(e.target.value)}
@@ -598,21 +628,33 @@ export function CertificatesGenerateAdmin() {
                   />
                 </Field>
 
-                <Field id="gen-description" label="Completion / Recognition Text">
-                  <Textarea
-                    rows={2}
-                    value={description}
-                    onChange={(e) => setDescriptionDraft(e.target.value)}
-                  />
-                </Field>
+                {isArtwork ? (
+                  <Field
+                    id="gen-description"
+                    label="Certificate Statement"
+                    hint="Set on the template (Certificates → Templates). Scores, marks, percentages and ranks are never shown on this certificate."
+                  >
+                    <Textarea rows={3} value={selectedTemplate?.defaultBodyText ?? ''} disabled />
+                  </Field>
+                ) : (
+                  <>
+                    <Field id="gen-description" label="Completion / Recognition Text">
+                      <Textarea
+                        rows={2}
+                        value={description}
+                        onChange={(e) => setDescriptionDraft(e.target.value)}
+                      />
+                    </Field>
 
-                <Field id="gen-achievement" label="Achievement / Rank / Distinction" optional>
-                  <Input
-                    value={achievementDetails}
-                    onChange={(e) => setAchievementDetails(e.target.value)}
-                    placeholder="e.g. 1st Place · Score 98% · Special Distinction"
-                  />
-                </Field>
+                    <Field id="gen-achievement" label="Achievement / Rank / Distinction" optional>
+                      <Input
+                        value={achievementDetails}
+                        onChange={(e) => setAchievementDetails(e.target.value)}
+                        placeholder="e.g. 1st Place · Score 98% · Special Distinction"
+                      />
+                    </Field>
+                  </>
+                )}
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field id="gen-comp-date" label="Achievement / Completion Date">
@@ -638,13 +680,18 @@ export function CertificatesGenerateAdmin() {
             {/* Step 3: Signatures */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">3. Signatories (2 to 4 Required)</CardTitle>
+                <CardTitle className="text-base">
+                  {slotLabels
+                    ? `3. Signatories (${slotLabels.join(' & ')} Required)`
+                    : '3. Signatories (2 to 4 Required)'}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <SignaturePicker
                   availableSignatures={activeSignatures}
                   value={signatures}
                   onChange={setSignaturesDraft}
+                  slotLabels={slotLabels}
                 />
               </CardContent>
             </Card>
@@ -669,14 +716,20 @@ export function CertificatesGenerateAdmin() {
                     recipientName={recipientName}
                     bodyText={description}
                     subjectTitle={subjectTitle}
-                    achievementDetails={achievementDetails || null}
+                    achievementDetails={isArtwork ? null : achievementDetails || null}
                     sourceLabel={sourceLabel.trim() || SOURCE_TYPE_LABELS[sourceType]}
                     completedAt={`${completedDate}T00:00:00.000Z`}
                     issuedAt={`${issuedDate}T00:00:00.000Z`}
-                    certificateNumber="ASRA-2026-NEW-PREVIEW"
-                    verificationUrl="https://asraacademy.org/verify/ASRA-2026-NEW-PREVIEW"
+                    certificateNumber="ASRA-2026-XXXX-XXXX"
+                    verificationUrl={absoluteUrl('/verify/ASRA-2026-XXXX-XXXX')}
                     signatures={previewSignatures}
                   />
+                )}
+                {isArtwork && (
+                  <p className="type-caption text-muted-foreground">
+                    Preview uses a placeholder certificate ID; the real ID, verification URL and QR
+                    code are generated when the certificate is issued.
+                  </p>
                 )}
 
                 <Button
@@ -684,7 +737,12 @@ export function CertificatesGenerateAdmin() {
                   size="lg"
                   loading={generating}
                   loadingText="Generating & storing PDF…"
-                  disabled={signatures.length < 2 || !selectedTemplate}
+                  disabled={
+                    !selectedTemplate ||
+                    (requiredCount !== null
+                      ? signatures.length !== requiredCount
+                      : signatures.length < 2)
+                  }
                 >
                   <Award className="size-4" aria-hidden /> Confirm & Generate Certificate
                 </Button>

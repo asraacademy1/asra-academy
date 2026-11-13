@@ -8,12 +8,15 @@ import {
 } from '@asra/types';
 import {
   CERTIFICATE_SIGNATURE_LIMITS,
+  isArtworkCertificateStyle,
+  artworkTemplateForStyle,
   type CertificateSignaturePlacementInput,
 } from '@asra/validation';
 import { CheckCircle2, Eye, FileDown, FileImage, Save, Settings2 } from 'lucide-react';
 import * as React from 'react';
 
 import { useAuth } from '@/components/auth/auth-provider';
+import { Alert } from '@/components/ui/alert';
 import {
   CertificatePreview,
   type PreviewSignatureItem,
@@ -65,7 +68,10 @@ export function CertificatesTemplatesAdmin() {
     signatures: CertificateSignaturePlacementInput[];
   } | null>(null);
 
-  const templates = templatesRes.data ?? [];
+  // Active templates first; archived (retired) templates stay listed for issued-certificate history.
+  const templates = [...(templatesRes.data ?? [])].sort(
+    (a, b) => Number(b.isActive) - Number(a.isActive),
+  );
   const activeSignatures = sigsRes.data ?? [];
 
   const activeTemplate =
@@ -151,6 +157,15 @@ export function CertificatesTemplatesAdmin() {
     });
   }, []);
 
+  const isArtwork = activeTemplate ? isArtworkCertificateStyle(activeTemplate.style) : false;
+  const isRetired = activeTemplate?.isRetired ?? false;
+  const slotLabels = isArtwork
+    ? artworkTemplateForStyle(activeTemplate?.style)?.layout.signatureSlots.map(
+        (slot) => slot.label,
+      )
+    : undefined;
+  const requiredCount = activeTemplate?.requiredSignatureCount ?? null;
+
   const sigById = new Map<string, CertificateSignatureDto>();
   for (const s of activeSignatures) sigById.set(s.id, s);
   for (const link of activeTemplate?.signatures ?? [])
@@ -174,7 +189,14 @@ export function CertificatesTemplatesAdmin() {
     e.preventDefault();
     if (!activeTemplate || !config) return;
 
+    if (requiredCount !== null && signatures.length > 0 && signatures.length !== requiredCount) {
+      toast.error('Invalid signature count', {
+        description: `This template requires exactly ${requiredCount} signatures (${slotLabels?.join(' and ')}).`,
+      });
+      return;
+    }
     if (
+      requiredCount === null &&
       signatures.length > 0 &&
       (signatures.length < CERTIFICATE_SIGNATURE_LIMITS.minSignatures ||
         signatures.length > CERTIFICATE_SIGNATURE_LIMITS.maxSignatures)
@@ -234,7 +256,7 @@ export function CertificatesTemplatesAdmin() {
     <>
       <CertificatesHeader
         title="Certificate Templates"
-        description="Preview the three official ASRA Academy PDF templates, customize headings and layout options, and assign 2–4 digital signatures."
+        description="Two ASRA QUIZORA 2026 — Certificate of Participation artwork designs are available (Design 1 and Design 2). Select one, assign its Event Coordinator and Director signatures, preview the exact PDF/PNG output, and review archived templates kept for previously issued certificates."
       />
 
       {templatesRes.loading && templates.length === 0 ? (
@@ -264,7 +286,7 @@ export function CertificatesTemplatesAdmin() {
                       <div className="flex items-center gap-1.5">
                         {tpl.isDefault && <Badge variant="accent">Default</Badge>}
                         <Badge variant={tpl.isActive ? 'success' : 'secondary'}>
-                          {tpl.isActive ? 'Active' : 'Inactive'}
+                          {tpl.isRetired ? 'Archived' : tpl.isActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </div>
                     </div>
@@ -282,7 +304,11 @@ export function CertificatesTemplatesAdmin() {
                       certificateTitle={tpl.defaultTitle}
                       recipientName="Fatima Zahra"
                       bodyText={tpl.defaultBodyText}
-                      subjectTitle="Tajweed & Classical Arabic"
+                      subjectTitle={
+                        isArtworkCertificateStyle(tpl.style)
+                          ? 'ASRA QUIZORA – 2026'
+                          : 'Tajweed & Classical Arabic'
+                      }
                       sourceLabel="Course"
                       certificateNumber="ASRA-2026-DEMO-0001"
                       verificationUrl="https://asraacademy-one.vercel.app/verify/ASRA-2026-DEMO-0001"
@@ -342,6 +368,28 @@ export function CertificatesTemplatesAdmin() {
                   </div>
                 </div>
 
+                {isArtwork && (
+                  <Alert tone="info" title="Artwork template (category QUIZ_PARTICIPATION)">
+                    <p>
+                      The approved ASRA QUIZORA 2026 artwork is the certificate background: logo,
+                      emblem, heading, borders, badge and the Event Coordinator / Director captions
+                      are fixed. Dynamic content: recipient name, statement, completion & issue
+                      dates, certificate ID and the verification QR code. Exactly 2 signatures are
+                      required — certificates cannot be previewed, generated or issued without them.
+                      Scores, marks, percentages and ranks are never displayed.
+                    </p>
+                  </Alert>
+                )}
+                {isRetired && (
+                  <Alert tone="warning" title="Archived template">
+                    <p>
+                      Replaced by ASRA QUIZORA 2026 — Certificate of Participation. It cannot be
+                      re-activated or used for new certificates; certificates already issued with it
+                      keep rendering and verifying from their saved snapshots.
+                    </p>
+                  </Alert>
+                )}
+
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field id="tpl-name" label="Template Name">
                     <Input
@@ -362,29 +410,48 @@ export function CertificatesTemplatesAdmin() {
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field id="tpl-title" label="Default Certificate Title">
+                  <Field
+                    id="tpl-title"
+                    label="Default Certificate Title"
+                    hint={isArtwork ? 'Fixed by the approved artwork.' : undefined}
+                  >
                     <Input
                       value={defaultTitle}
                       onChange={(e) => setDefaultTitle(e.target.value)}
-                      disabled={!canManage}
+                      disabled={!canManage || isArtwork}
                       required
                     />
                   </Field>
-                  <Field id="tpl-subtitle" label="Subtitle / Eyebrow" optional>
-                    <Input
-                      value={defaultSubtitle}
-                      onChange={(e) => setDefaultSubtitle(e.target.value)}
-                      disabled={!canManage}
-                    />
-                  </Field>
+                  {!isArtwork && (
+                    <Field id="tpl-subtitle" label="Subtitle / Eyebrow" optional>
+                      <Input
+                        value={defaultSubtitle}
+                        onChange={(e) => setDefaultSubtitle(e.target.value)}
+                        disabled={!canManage}
+                      />
+                    </Field>
+                  )}
                 </div>
 
-                <Field id="tpl-body" label="Default Achievement / Completion Description">
+                <Field
+                  id="tpl-body"
+                  label={
+                    isArtwork
+                      ? 'Certificate Statement'
+                      : 'Default Achievement / Completion Description'
+                  }
+                  hint={
+                    isArtwork
+                      ? 'Placeholders: {title} = certificate title (quiz, course or event name), {date} = completion date (e.g. 14th November 2026). Wrap text in **double asterisks** for bold; press Enter for a line break. Max 400 characters.'
+                      : undefined
+                  }
+                >
                   <Textarea
-                    rows={2}
+                    rows={isArtwork ? 3 : 2}
                     value={defaultBodyText}
                     onChange={(e) => setDefaultBodyText(e.target.value)}
                     disabled={!canManage}
+                    maxLength={isArtwork ? 400 : undefined}
                     required
                   />
                 </Field>
@@ -399,79 +466,87 @@ export function CertificatesTemplatesAdmin() {
 
                 {/* Styling & Field Visibility */}
                 <div className="grid gap-3 rounded-xl border bg-background/50 p-4">
-                  <h3 className="type-label text-heading">Layout & Field Visibility</h3>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field id="tpl-accent" label="Primary Accent Color">
-                      <Input
-                        type="color"
-                        value={config.accentColor}
-                        onChange={(e) => setConfig({ ...config, accentColor: e.target.value })}
-                        disabled={!canManage}
-                        className="h-10 cursor-pointer p-1"
-                      />
-                    </Field>
-                    <Field id="tpl-gold" label="Secondary Highlight Color">
-                      <Input
-                        type="color"
-                        value={config.secondaryColor}
-                        onChange={(e) => setConfig({ ...config, secondaryColor: e.target.value })}
-                        disabled={!canManage}
-                        className="h-10 cursor-pointer p-1"
-                      />
-                    </Field>
-                  </div>
+                  <h3 className="type-label text-heading">
+                    {isArtwork ? 'Availability' : 'Layout & Field Visibility'}
+                  </h3>
+                  {!isArtwork && (
+                    <>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field id="tpl-accent" label="Primary Accent Color">
+                          <Input
+                            type="color"
+                            value={config.accentColor}
+                            onChange={(e) => setConfig({ ...config, accentColor: e.target.value })}
+                            disabled={!canManage}
+                            className="h-10 cursor-pointer p-1"
+                          />
+                        </Field>
+                        <Field id="tpl-gold" label="Secondary Highlight Color">
+                          <Input
+                            type="color"
+                            value={config.secondaryColor}
+                            onChange={(e) =>
+                              setConfig({ ...config, secondaryColor: e.target.value })
+                            }
+                            disabled={!canManage}
+                            className="h-10 cursor-pointer p-1"
+                          />
+                        </Field>
+                      </div>
 
-                  <div className="grid gap-2.5 pt-1 sm:grid-cols-2">
-                    <CheckboxField
-                      id="cfg-logo"
-                      label="Show Academy Logo"
-                      checked={config.showLogo}
-                      onChange={(v) => setConfig({ ...config, showLogo: v })}
-                      disabled={!canManage}
-                    />
-                    <CheckboxField
-                      id="cfg-seal"
-                      label="Show Official Seal"
-                      checked={config.showSeal}
-                      onChange={(v) => setConfig({ ...config, showSeal: v })}
-                      disabled={!canManage}
-                    />
-                    <CheckboxField
-                      id="cfg-qr"
-                      label="Show QR Verification Code"
-                      checked={config.showQrCode}
-                      onChange={(v) => setConfig({ ...config, showQrCode: v })}
-                      disabled={!canManage}
-                    />
-                    <CheckboxField
-                      id="cfg-source"
-                      label="Show Source Badge"
-                      checked={config.showSourceLabel}
-                      onChange={(v) => setConfig({ ...config, showSourceLabel: v })}
-                      disabled={!canManage}
-                    />
-                    <CheckboxField
-                      id="cfg-comp-date"
-                      label="Show Completion Date"
-                      checked={config.showCompletionDate}
-                      onChange={(v) => setConfig({ ...config, showCompletionDate: v })}
-                      disabled={!canManage}
-                    />
-                    <CheckboxField
-                      id="cfg-issue-date"
-                      label="Show Issue Date"
-                      checked={config.showIssueDate}
-                      onChange={(v) => setConfig({ ...config, showIssueDate: v })}
-                      disabled={!canManage}
-                    />
-                    <CheckboxField
-                      id="cfg-id"
-                      label="Show Certificate ID"
-                      checked={config.showCertificateNumber}
-                      onChange={(v) => setConfig({ ...config, showCertificateNumber: v })}
-                      disabled={!canManage}
-                    />
-                  </div>
+                      <div className="grid gap-2.5 pt-1 sm:grid-cols-2">
+                        <CheckboxField
+                          id="cfg-logo"
+                          label="Show Academy Logo"
+                          checked={config.showLogo}
+                          onChange={(v) => setConfig({ ...config, showLogo: v })}
+                          disabled={!canManage}
+                        />
+                        <CheckboxField
+                          id="cfg-seal"
+                          label="Show Official Seal"
+                          checked={config.showSeal}
+                          onChange={(v) => setConfig({ ...config, showSeal: v })}
+                          disabled={!canManage}
+                        />
+                        <CheckboxField
+                          id="cfg-qr"
+                          label="Show QR Verification Code"
+                          checked={config.showQrCode}
+                          onChange={(v) => setConfig({ ...config, showQrCode: v })}
+                          disabled={!canManage}
+                        />
+                        <CheckboxField
+                          id="cfg-source"
+                          label="Show Source Badge"
+                          checked={config.showSourceLabel}
+                          onChange={(v) => setConfig({ ...config, showSourceLabel: v })}
+                          disabled={!canManage}
+                        />
+                        <CheckboxField
+                          id="cfg-comp-date"
+                          label="Show Completion Date"
+                          checked={config.showCompletionDate}
+                          onChange={(v) => setConfig({ ...config, showCompletionDate: v })}
+                          disabled={!canManage}
+                        />
+                        <CheckboxField
+                          id="cfg-issue-date"
+                          label="Show Issue Date"
+                          checked={config.showIssueDate}
+                          onChange={(v) => setConfig({ ...config, showIssueDate: v })}
+                          disabled={!canManage}
+                        />
+                        <CheckboxField
+                          id="cfg-id"
+                          label="Show Certificate ID"
+                          checked={config.showCertificateNumber}
+                          onChange={(v) => setConfig({ ...config, showCertificateNumber: v })}
+                          disabled={!canManage}
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <div className="flex flex-wrap gap-5 border-t pt-3">
                     <CheckboxField
@@ -479,14 +554,14 @@ export function CertificatesTemplatesAdmin() {
                       label="Set as platform default template"
                       checked={isDefault}
                       onChange={setIsDefault}
-                      disabled={!canManage}
+                      disabled={!canManage || isRetired}
                     />
                     <CheckboxField
                       id="tpl-active"
                       label="Template is active"
                       checked={isActive}
                       onChange={setIsActive}
-                      disabled={!canManage || isDefault}
+                      disabled={!canManage || isDefault || isRetired}
                     />
                   </div>
                 </div>
@@ -498,6 +573,7 @@ export function CertificatesTemplatesAdmin() {
                     value={signatures}
                     onChange={setSignatures}
                     disabled={!canManage}
+                    slotLabels={slotLabels}
                   />
                 </div>
 
@@ -568,7 +644,9 @@ export function CertificatesTemplatesAdmin() {
                   certificateTitle={defaultTitle}
                   recipientName="Fatima Zahra Al-Khatib"
                   bodyText={defaultBodyText}
-                  subjectTitle="Foundations of Classical Arabic & Tajweed"
+                  subjectTitle={
+                    isArtwork ? 'ASRA QUIZORA – 2026' : 'Foundations of Classical Arabic & Tajweed'
+                  }
                   achievementDetails={
                     activeTemplate.style === 'PREMIUM_ACHIEVEMENT'
                       ? 'First Class Distinction · Top Performer'
@@ -583,9 +661,9 @@ export function CertificatesTemplatesAdmin() {
                 />
 
                 <p className="type-caption text-muted-foreground">
-                  Preview updates live as you configure headings, visibility toggles, and 2–4
-                  digital signatures. Sample PNG and Sample PDF are generated dynamically in memory
-                  without storing certificate files.
+                  {isArtwork
+                    ? 'Preview updates live with the same artwork, fonts and layout as the downloaded certificate. Sample PNG / Sample PDF render the exact final output on the server (refused until both signatures are saved).'
+                    : 'Preview updates live as you configure headings, visibility toggles, and 2–4 digital signatures. Sample PNG and Sample PDF are generated dynamically in memory without storing certificate files.'}
                 </p>
               </div>
             </form>

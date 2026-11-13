@@ -5,6 +5,7 @@ import type {
 } from '@asra/types';
 import {
   CERTIFICATE_SIGNATURE_LIMITS,
+  isArtworkCertificateStyle,
   type CertificateSignaturePlacementInput,
   type UpdateCertificateTemplateInput,
 } from '@asra/validation';
@@ -25,6 +26,11 @@ import {
 import { generateCertificatePdf } from './pdf.service.js';
 import { generateCertificatePng } from './png.service.js';
 import { certificateStorage } from './storage.service.js';
+import {
+  assertTemplateSignatureRequirement,
+  isRetiredTemplateKey,
+  templateIssuanceProblem,
+} from './template-rules.js';
 
 const templateInclude = {
   signatures: {
@@ -180,6 +186,17 @@ export const templatesService = {
         include: { signatures: { include: { signature: true } } },
       });
 
+      if (
+        isRetiredTemplateKey(existing.key) &&
+        (input.isActive === true || input.isDefault === true)
+      ) {
+        throw fieldError(
+          'VALIDATION_ERROR',
+          input.isActive === true ? 'isActive' : 'isDefault',
+          'This template has been archived (replaced by ASRA QUIZORA 2026 — Certificate of Participation) and cannot be re-activated. Issued certificates that use it remain valid and downloadable.',
+        );
+      }
+
       if (input.isActive === false && existing.isDefault) {
         throw fieldError(
           'VALIDATION_ERROR',
@@ -188,8 +205,26 @@ export const templatesService = {
         );
       }
 
+      if (isArtworkCertificateStyle(existing.style)) {
+        if (input.defaultTitle !== undefined && input.defaultTitle !== existing.defaultTitle) {
+          throw fieldError(
+            'VALIDATION_ERROR',
+            'defaultTitle',
+            'The heading is part of the approved certificate artwork and cannot be changed.',
+          );
+        }
+        if (input.defaultBodyText !== undefined && input.defaultBodyText.length > 400) {
+          throw fieldError(
+            'VALIDATION_ERROR',
+            'defaultBodyText',
+            'The certificate statement must be 400 characters or fewer to fit the artwork.',
+          );
+        }
+      }
+
       if (input.signatures !== undefined) {
-        await validateAndBuildSignatureSnapshots(tx, input.signatures);
+        const snapshots = await validateAndBuildSignatureSnapshots(tx, input.signatures);
+        assertTemplateSignatureRequirement(existing, snapshots);
         await tx.certificateTemplateSignature.deleteMany({ where: { templateId: id } });
         await tx.certificateTemplateSignature.createMany({
           data: input.signatures.map((sig) => ({
@@ -318,7 +353,14 @@ export const templatesService = {
       });
     }
 
-    if (signatureSnapshots.length === 0) {
+    const isArtwork = isArtworkCertificateStyle(tpl.style);
+    if (isArtwork) {
+      // Mandatory signatures: the preview must represent the final output, so it is refused
+      // (never rendered with placeholder signatories) until both signatures are configured.
+      const problem = templateIssuanceProblem({ ...tpl, isActive: true });
+      if (problem) throw fieldError('VALIDATION_ERROR', 'signatures', problem);
+      assertTemplateSignatureRequirement(tpl, signatureSnapshots);
+    } else if (signatureSnapshots.length === 0) {
       signatureSnapshots.push(...DEFAULT_FALLBACK_SIGNATURES);
     }
 
@@ -341,7 +383,7 @@ export const templatesService = {
       certificateNumber: sampleCode,
       recipientName: 'Fatima Zahra Al-Khatib',
       certificateTitle: tpl.defaultTitle,
-      courseTitle: 'Foundations of Classical Arabic & Tajweed',
+      courseTitle: isArtwork ? 'ASRA QUIZORA – 2026' : 'Foundations of Classical Arabic & Tajweed',
       description: tpl.defaultBodyText,
       achievementDetails:
         tpl.style === 'PREMIUM_ACHIEVEMENT' ? 'First Class Distinction · Top Performer' : null,

@@ -128,6 +128,10 @@ enum CertificateTemplateStyle {
   CLASSIC_INSTITUTIONAL
   MODERN_MINIMAL
   PREMIUM_ACHIEVEMENT
+  /// ASRA QUIZORA 2026 Certificate of Participation — reference-artwork background template.
+  QUIZORA_PARTICIPATION
+  /// ASRA QUIZORA 2026 Certificate of Participation (Design 2) — second reference artwork.
+  QUIZORA_PARTICIPATION_DESIGN_2
 
   @@map("certificate_template_style")
 }

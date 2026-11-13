@@ -35,26 +35,42 @@ export function SignaturePicker({
   value,
   onChange,
   disabled = false,
+  slotLabels,
 }: {
   availableSignatures: CertificateSignatureDto[];
   value: CertificateSignaturePlacementInput[];
   onChange: (next: CertificateSignaturePlacementInput[]) => void;
   disabled?: boolean;
+  /**
+   * Fixed signatory slots of an artwork template (e.g. ['Event Coordinator', 'Director']):
+   * exactly this many signatures are required and position labels follow the slot order.
+   */
+  slotLabels?: readonly string[];
 }) {
   const activeSignatures = availableSignatures.filter((s) => s.isActive);
   const byId = new Map(availableSignatures.map((s) => [s.id, s]));
   const selectedIds = new Set(value.map((v) => v.signatureId));
+  const minCount = slotLabels ? slotLabels.length : CERTIFICATE_SIGNATURE_LIMITS.minSignatures;
+  const maxCount = slotLabels ? slotLabels.length : CERTIFICATE_SIGNATURE_LIMITS.maxSignatures;
+  const labelFor = (index: number, total: number) =>
+    slotLabels ? (slotLabels[index] ?? `Slot ${index + 1}`) : defaultPositionForIndex(index, total);
+  const relabel = (list: CertificateSignaturePlacementInput[]) =>
+    list.map((item, idx) => ({
+      ...item,
+      sortOrder: idx,
+      ...(slotLabels ? { positionLabel: labelFor(idx, list.length) } : {}),
+    }));
 
   const addSignature = (sig: CertificateSignatureDto) => {
     if (!sig.isActive || selectedIds.has(sig.id)) return;
-    if (value.length >= CERTIFICATE_SIGNATURE_LIMITS.maxSignatures) return;
+    if (value.length >= maxCount) return;
     const nextOrder = value.length;
     onChange([
       ...value,
       {
         signatureId: sig.id,
         sortOrder: nextOrder,
-        positionLabel: defaultPositionForIndex(nextOrder, nextOrder + 1),
+        positionLabel: labelFor(nextOrder, nextOrder + 1),
         showName: true,
         showDesignation: true,
       },
@@ -62,10 +78,7 @@ export function SignaturePicker({
   };
 
   const removeAt = (index: number) => {
-    const filtered = value
-      .filter((_, idx) => idx !== index)
-      .map((item, idx) => ({ ...item, sortOrder: idx }));
-    onChange(filtered);
+    onChange(relabel(value.filter((_, idx) => idx !== index)));
   };
 
   const move = (index: number, delta: -1 | 1) => {
@@ -75,29 +88,34 @@ export function SignaturePicker({
     const current = copy[index]!;
     copy[index] = copy[target]!;
     copy[target] = current;
-    onChange(copy.map((item, idx) => ({ ...item, sortOrder: idx })));
+    onChange(relabel(copy));
   };
 
   const updateAt = (index: number, patch: Partial<CertificateSignaturePlacementInput>) => {
     onChange(value.map((item, idx) => (idx === index ? { ...item, ...patch } : item)));
   };
 
-  const countValid =
-    value.length >= CERTIFICATE_SIGNATURE_LIMITS.minSignatures &&
-    value.length <= CERTIFICATE_SIGNATURE_LIMITS.maxSignatures;
+  const countValid = value.length >= minCount && value.length <= maxCount;
 
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="type-label text-heading">Digital Signatures ({value.length} / 4)</h3>
+          <h3 className="type-label text-heading">
+            Digital Signatures ({value.length} / {maxCount})
+          </h3>
           <p className="type-caption text-muted-foreground">
-            Select 2 to 4 active registered signatures, arrange order, and configure
-            name/designation visibility.
+            {slotLabels
+              ? `Required: exactly ${slotLabels.length} active signatures, in this order — ${slotLabels.join(' then ')}. Certificates cannot be previewed or issued without them.`
+              : 'Select 2 to 4 active registered signatures, arrange order, and configure name/designation visibility.'}
           </p>
         </div>
         <Badge variant={countValid ? 'success' : 'warning'}>
-          {countValid ? `${value.length} selected` : 'Select 2–4 signatures'}
+          {countValid
+            ? `${value.length} selected`
+            : slotLabels
+              ? `Select ${slotLabels.length} signatures`
+              : 'Select 2–4 signatures'}
         </Badge>
       </div>
 
@@ -188,33 +206,42 @@ export function SignaturePicker({
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="grid gap-1">
-                      <SelectField
-                        id={`sig-pos-${index}`}
-                        label="Position"
-                        value={
-                          POSITION_SUGGESTIONS.some((p) => p.value === item.positionLabel)
-                            ? item.positionLabel
-                            : 'CUSTOM'
-                        }
-                        onValueChange={(next) => {
-                          if (next !== 'CUSTOM') updateAt(index, { positionLabel: next });
-                        }}
-                        options={[
-                          ...POSITION_SUGGESTIONS,
-                          { value: 'CUSTOM', label: 'Custom label…' },
-                        ]}
-                        disabled={disabled}
-                      />
-                      <Input
-                        value={item.positionLabel}
-                        onChange={(e) => updateAt(index, { positionLabel: e.target.value })}
-                        placeholder="Custom position label"
-                        maxLength={40}
-                        disabled={disabled}
-                        aria-label={`Custom position label for signature ${index + 1}`}
-                      />
-                    </div>
+                    {slotLabels ? (
+                      <div className="grid gap-1">
+                        <p className="type-caption text-muted-foreground">Signature area</p>
+                        <Badge variant="outline" className="w-fit">
+                          {labelFor(index, value.length)}
+                        </Badge>
+                      </div>
+                    ) : (
+                      <div className="grid gap-1">
+                        <SelectField
+                          id={`sig-pos-${index}`}
+                          label="Position"
+                          value={
+                            POSITION_SUGGESTIONS.some((p) => p.value === item.positionLabel)
+                              ? item.positionLabel
+                              : 'CUSTOM'
+                          }
+                          onValueChange={(next) => {
+                            if (next !== 'CUSTOM') updateAt(index, { positionLabel: next });
+                          }}
+                          options={[
+                            ...POSITION_SUGGESTIONS,
+                            { value: 'CUSTOM', label: 'Custom label…' },
+                          ]}
+                          disabled={disabled}
+                        />
+                        <Input
+                          value={item.positionLabel}
+                          onChange={(e) => updateAt(index, { positionLabel: e.target.value })}
+                          placeholder="Custom position label"
+                          maxLength={40}
+                          disabled={disabled}
+                          aria-label={`Custom position label for signature ${index + 1}`}
+                        />
+                      </div>
+                    )}
                     <div className="flex flex-col justify-center gap-2 pt-1">
                       <CheckboxField
                         id={`sig-name-${index}`}
@@ -248,11 +275,7 @@ export function SignaturePicker({
           <div className="grid gap-2 sm:grid-cols-2">
             {availableSignatures.map((sig) => {
               const isSelected = selectedIds.has(sig.id);
-              const canAdd =
-                sig.isActive &&
-                !isSelected &&
-                value.length < CERTIFICATE_SIGNATURE_LIMITS.maxSignatures &&
-                !disabled;
+              const canAdd = sig.isActive && !isSelected && value.length < maxCount && !disabled;
               const src = signatureImageSrc(sig);
               return (
                 <button

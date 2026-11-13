@@ -1,4 +1,5 @@
 import type { QuizCertificateBatchStatus, QuizCertificateFormat } from '@asra/types';
+import { isArtworkCertificateStyle } from '@asra/validation';
 import { QUIZ_CERT_CLAIM_LEASE_MS, QUIZ_CERT_SWEEP_MS } from '../../config/constants.js';
 import { prisma } from '../../database/prisma.js';
 import { emailService } from '../../email/email.service.js';
@@ -334,6 +335,8 @@ export async function processQuizCertificateItem(itemId: string): Promise<boolea
       );
     }
 
+    // Participation artwork template: statement from the template, never scores/marks/ranks.
+    const isArtwork = isArtworkCertificateStyle(snapshots.templateSnapshot.style);
     const certNumber = await allocateCertificateNumber(prisma, issuedAt.getUTCFullYear());
     const verificationUrl = buildVerificationUrl(certNumber);
     const renderInput = {
@@ -341,8 +344,8 @@ export async function processQuizCertificateItem(itemId: string): Promise<boolea
       recipientName,
       certificateTitle: snapshots.templateSnapshot.certificateTitle,
       courseTitle: item.quiz.title,
-      description: texts.description,
-      achievementDetails: texts.achievementDetails,
+      description: isArtwork ? snapshots.templateSnapshot.bodyText : texts.description,
+      achievementDetails: isArtwork ? null : texts.achievementDetails,
       sourceType: 'ACADEMY_QUIZ' as const,
       sourceLabel: 'Academy Quiz',
       completedAt,

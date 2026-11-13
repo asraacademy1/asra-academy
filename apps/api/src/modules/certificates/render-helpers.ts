@@ -7,7 +7,7 @@ import type {
   CertificateStatus,
   CertificateTemplateSnapshotDto,
 } from '@asra/types';
-import { INITIAL_CERTIFICATE_TEMPLATES } from './templates.data.js';
+import { LEGACY_CERTIFICATE_TEMPLATES } from './templates.data.js';
 
 export interface CertificateRenderData {
   certificateNumber: string;
@@ -105,7 +105,7 @@ export function resolveRenderTemplate(data: CertificateRenderData): CertificateT
   if (data.templateSnapshot) {
     return data.templateSnapshot;
   }
-  const classic = INITIAL_CERTIFICATE_TEMPLATES[0]!;
+  const classic = LEGACY_CERTIFICATE_TEMPLATES[0]!;
   return {
     templateId: null,
     key: classic.key,

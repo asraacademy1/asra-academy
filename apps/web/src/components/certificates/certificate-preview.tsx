@@ -11,13 +11,14 @@ import type {
   CertificateTemplateConfigDto,
   CertificateTemplateStyle,
 } from '@asra/types';
-import { SOURCE_TYPE_LABELS } from '@asra/validation';
+import { isArtworkCertificateStyle, SOURCE_TYPE_LABELS } from '@asra/validation';
 import QRCode from 'qrcode';
 import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { QuizoraCertificatePreview } from './quizora-certificate-preview';
 
 export interface PreviewSignatureItem {
   key: string;
@@ -204,6 +205,31 @@ export function CertificatePreview({
   className,
 }: CertificatePreviewProps) {
   const effectiveStatus: CertificateLifecycleStatus = lifecycleStatus ?? status;
+
+  // ASRA QUIZORA 2026 artwork template: reference-artwork preview mirroring the server renderer.
+  // The heading is part of the artwork; scores / achievement details are never shown.
+  if (isArtworkCertificateStyle(style)) {
+    return (
+      <QuizoraCertificatePreview
+        style={style}
+        recipientName={recipientName}
+        bodyText={bodyText}
+        subjectTitle={subjectTitle}
+        completedAt={completedAt}
+        issuedAt={issuedAt}
+        certificateNumber={certificateNumber}
+        verificationUrl={verificationUrl}
+        signatures={signatures.map((sig) => ({
+          key: sig.key,
+          fullName: sig.fullName,
+          imageSrc: sig.imageSrc,
+        }))}
+        effectiveStatus={effectiveStatus}
+        supersededByCertificateNumber={supersededByCertificateNumber}
+        className={className}
+      />
+    );
+  }
   const sigList =
     signatures.length > 0
       ? signatures.slice(0, 4)

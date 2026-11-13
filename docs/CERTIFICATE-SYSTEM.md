@@ -1,10 +1,10 @@
 # ASRA Academy — Certificate Management System (Phase 13 + Phase 17 Upgrade)
 
-| Field   | Value                                                                                                                    |
-| ------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Version | 2.0.0 (Phase 17 Generic Certificate Management Module)                                                                   |
-| Status  | Complete Production Architecture — Backward-Compatible Upgrade                                                           |
-| Scope   | Centralized issuance engine, 3 reusable PDF templates, digital signature management, student gallery, verification, RBAC |
+| Field   | Value                                                                                                                                                          |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Version | 2.0.0 (Phase 17 Generic Certificate Management Module)                                                                                                         |
+| Status  | Complete Production Architecture — Backward-Compatible Upgrade                                                                                                 |
+| Scope   | Centralized issuance engine, ASRA QUIZORA 2026 artwork template (+3 archived PDF templates), digital signature management, student gallery, verification, RBAC |
 
 ---
 
@@ -40,9 +40,33 @@ ASRA Academy's Certificate Management Module provides a single centralized engin
 
 ---
 
-## 2. Three Initial Certificate Templates
+## 2. Certificate Templates
 
-All three templates render server-side as printable **Landscape A4 (`841.89 × 595.28` pt)** PDFs via `pdfkit` (`apps/api/src/modules/certificates/pdf.service.ts`) with dynamic long-name sizing, vector QR codes (`qrcode`), academy branding, and 2–4 positioned digital signatures, paired with matching live React previews (`apps/web/src/components/certificates/certificate-preview.tsx`):
+### 2.1 Active template — ASRA QUIZORA 2026 — Certificate of Participation (`QUIZORA_PARTICIPATION`)
+
+The only template offered for new issuance (category `QUIZ_PARTICIPATION`, key `asra-quizora-2026-participation`, default). It is used for every certificate source (course, quiz participation and rank, exam, event, manual, …).
+
+- **Artwork background**: the approved reference image (`apps/api/assets/certificates/quizora-2026/artwork.jpg`, 1536 × 1024) is embedded unmodified. Logo, central emblem, heading, borders, laurels, trophy, badge, building and the Event Coordinator / Director captions come from the artwork.
+- **Dynamic content** (shared layout in `packages/validation/src/certificate-artwork.ts`): recipient name on the rule under "This is to certify that" (54 → 30 px, two balanced lines below that, ellipsis as last resort); the statement, rendered from the template body text with `{title}` (certificate subject — quiz/course/event name), `{date}` (completion date, e.g. "14th November 2026", Asia/Kolkata), `**bold**` and line breaks — the baked-in artwork statement is hidden by `statement-patch.png`; metadata (completion date, issued date, certificate ID, verification URL); the verification QR (bottom right, encodes `{NEXT_PUBLIC_APP_URL}/verify/{certificateNumber}`).
+- **Mandatory signatures**: exactly 2 active signatures — position 1 Event Coordinator, position 2 Director. Enforced in the backend for template configuration, template/quiz sample previews, every issuance path (course, quiz claim, manual, generic, reissue, bulk quiz preview/issue/worker) and at render time; there is never a fallback or substitute signatory.
+- **No scores**: scores, marks, percentages, accuracy and ranks are never rendered; `achievementDetails` is not stored and is hidden from DTOs and public verification for this template.
+- **Output**: PDF 1152 × 768 pt (exact 3:2 page, original JPEG embedded, TeX Gyre Pagella embedded, vector QR); PNG 3072 × 2048 (2×, same font outlines). The admin live preview (`quizora-certificate-preview.tsx`) uses the same artwork, fonts and layout functions.
+
+### 2.1b Active template — ASRA QUIZORA 2026 — Certificate of Participation (Design 2) (`QUIZORA_PARTICIPATION_DESIGN_2`)
+
+Template 2 (key `asra-quizora-2026-participation-design-2`, category `QUIZ_PARTICIPATION`, not the default) is independently selectable everywhere Template 1 is (template admin, manual / generic issuance, quiz bulk issuance). It uses its own reference artwork (`apps/api/assets/certificates/quizora-2026-design-2/`) and its own layout definition (`QUIZORA_2026_DESIGN_2_DEFINITION`) on the same engine, rules and signature enforcement as Template 1:
+
+- Recipient name in Parisienne script above the gold divider; statement in four centred lines (Pagella Bold Italic, title in red) from the template body (`{title}`, `{date}`, `**bold**`, line breaks).
+- Bottom-centre per-certificate verification QR at the reference QR position (sample QR removed by the patch); metadata as two centred footer lines between the QR and the bottom wave.
+- Exactly 2 signatures (Event Coordinator, Director) — the reference sample signatures are removed and replaced by the selected ones; no scores are ever rendered.
+
+Both artwork templates share `packages/validation/src/certificate-artwork.ts` (`ARTWORK_TEMPLATE_DEFINITIONS`); each certificate renders with the definition of the style frozen in its template snapshot, so switching templates never carries artwork or positions across.
+
+### 2.2 Archived templates (Phase 13 / 17)
+
+Classic / Institutional, Modern / Minimal and Premium / Achievement are **archived** by `ensureCertificateDefaults` (`is_active = false`, `is_default = false`, `template.archived` audit entries) — never deleted. They cannot be re-activated or selected for new certificates, but every certificate issued with them keeps rendering (from its immutable snapshot) and verifying exactly as before; reissuing such a certificate uses the current default template.
+
+The archived templates render server-side as printable **Landscape A4 (`841.89 × 595.28` pt)** PDFs via `pdfkit` (`apps/api/src/modules/certificates/pdf.service.ts`) with dynamic long-name sizing, vector QR codes (`qrcode`), academy branding, and 2–4 positioned digital signatures, paired with matching live React previews (`apps/web/src/components/certificates/certificate-preview.tsx`):
 
 1. **Classic / Institutional (`CLASSIC_INSTITUTIONAL`)**: Ivory background, triple forest-green & gold academic borders, corner diamond flourishes, circular academy seal, traditional formal typography. Suitable for courses, diplomas, and training programs.
 2. **Modern / Minimal (`MODERN_MINIMAL`)**: Crisp high-whitespace studio card layout with vertical accent stripe, structured metadata grid, top-right verification QR badge, and sleek underline signatures. Suitable for coding competitions, technical quizzes, and workshops.

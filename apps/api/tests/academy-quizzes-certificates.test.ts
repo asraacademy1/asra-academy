@@ -24,6 +24,7 @@ import type {
   QuizEligibleParticipantsResponseDto,
   QuizIssuedCertificateItemDto,
 } from '@asra/types';
+import { QUIZORA_2026_TEMPLATE_KEY } from '@asra/validation';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/database/prisma.js';
 import { memoryTransport, setEmailTransport } from '../src/email/email.service.js';
@@ -38,6 +39,7 @@ import { at, newFaculty, newStudent, plusMinutes, type Student } from './support
 import { login, provision, resetAuthState } from './support/auth.js';
 import { apiAs, expectStatus, type Api } from './support/catalog.js';
 import { startServer, TestClient } from './support/http.js';
+import { configureQuizoraTemplate } from './support/quizora-template.js';
 
 let baseUrl: string;
 let close: () => Promise<void>;
@@ -86,17 +88,21 @@ beforeEach(async () => {
     prisma.user.update({ where: { id: s3.userId }, data: { fullName: 'Fatima Khan' } }),
     prisma.user.update({ where: { id: s4.userId }, data: { fullName: 'Zaid Mirza' } }),
   ]);
+  await configureQuizoraTemplate();
   const tplRes = await admin<CertificateTemplateDto[]>('GET', '/admin/certificates/templates');
   expectStatus(tplRes, 200);
   templates = tplRes.body.data;
   if (memoryTransport) memoryTransport.outbox.length = 0;
 });
 
+/**
+ * The legacy Classic / Modern / Premium templates are archived; every participation and rank
+ * slot is assigned the single active ASRA QUIZORA 2026 template (configured with its two
+ * mandatory signatures in beforeEach).
+ */
 function defaultTemplateIds() {
-  const classic = templates.find((t) => t.key === 'classic-institutional') ?? templates[0]!;
-  const modern = templates.find((t) => t.key === 'modern-minimal') ?? templates[0]!;
-  const premium = templates.find((t) => t.key === 'premium-achievement') ?? templates[0]!;
-  return { classic: classic.id, modern: modern.id, premium: premium.id };
+  const quizora = templates.find((t) => t.key === QUIZORA_2026_TEMPLATE_KEY && t.isActive)!;
+  return { classic: quizora.id, modern: quizora.id, premium: quizora.id };
 }
 
 describe('Quiz Certificate Eligibility & Lifecycle Gates', () => {

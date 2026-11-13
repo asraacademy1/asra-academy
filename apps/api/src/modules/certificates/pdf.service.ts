@@ -3,9 +3,16 @@ import type {
   CertificateSignatureSnapshotDto,
   CertificateTemplateSnapshotDto,
 } from '@asra/types';
-import { SOURCE_TYPE_LABELS } from '@asra/validation';
+import { isArtworkCertificateStyle, SOURCE_TYPE_LABELS } from '@asra/validation';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
+import { loadArtworkAssets } from './quizora-assets.js';
+import {
+  artworkDefinitionFor,
+  buildQuizoraRenderModel,
+  quizoraPdfPageSize,
+  renderQuizoraPdfPage,
+} from './quizora-renderer.js';
 import {
   findEmblemPath,
   formatCertificateDate,
@@ -1176,13 +1183,51 @@ function renderPremiumAchievement(
 }
 
 /**
- * Generates an official, publication-grade landscape A4 PDF certificate using the
- * configured template style (Classic / Institutional, Modern / Minimal, or Premium / Achievement).
+ * ASRA QUIZORA 2026 artwork template: 1152 × 768 pt page matching the reference artwork's exact
+ * 3:2 aspect ratio. Signature / asset problems throw before any byte is produced.
  */
-export async function generateCertificatePdf(data: CertificatePdfData): Promise<Buffer> {
+function generateQuizoraPdf(data: CertificatePdfData, author: string): Promise<Buffer> {
+  const def = artworkDefinitionFor(data);
+  const assets = loadArtworkAssets(def);
+  const model = buildQuizoraRenderModel(data, assets);
   return new Promise<Buffer>((resolve, reject) => {
     try {
-      const tpl = resolveRenderTemplate(data);
+      const doc = new PDFDocument({
+        size: quizoraPdfPageSize(def),
+        margins: { top: 0, bottom: 0, left: 0, right: 0 },
+        autoFirstPage: true,
+        info: {
+          Title: `Certificate of Participation - ${data.recipientName} - ${data.courseTitle}`,
+          Author: author || 'ASRA Academy',
+          Subject: `Certificate ${data.certificateNumber}`,
+          Keywords: 'ASRA Academy, ASRA QUIZORA 2026, Certificate of Participation, Verification',
+          Creator: 'ASRA Academy Certificate Management Engine',
+        },
+      });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', (err) => reject(err));
+      renderQuizoraPdfPage(doc, model, assets);
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Generates an official, publication-grade landscape A4 PDF certificate using the
+ * configured template style (Classic / Institutional, Modern / Minimal, or Premium / Achievement),
+ * or the reference-artwork page for the ASRA QUIZORA 2026 template.
+ */
+export async function generateCertificatePdf(data: CertificatePdfData): Promise<Buffer> {
+  const tpl = resolveRenderTemplate(data);
+  if (isArtworkCertificateStyle(tpl.style)) {
+    return generateQuizoraPdf(data, tpl.issuingAuthority);
+  }
+  return new Promise<Buffer>((resolve, reject) => {
+    try {
       const emblemPath = findEmblemPath();
 
       const doc = new PDFDocument({

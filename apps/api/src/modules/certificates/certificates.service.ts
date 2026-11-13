@@ -18,6 +18,7 @@ import {
 } from '@asra/types';
 import {
   CERTIFICATE_SIGNATURE_LIMITS,
+  isArtworkCertificateStyle,
   SOURCE_TYPE_LABELS,
   type AdminCertificateQuery,
   type CertificateAuditQuery,
@@ -63,6 +64,12 @@ import { generateCertificateNumber } from './id-generator.js';
 import { generateCertificatePdf as renderPdf } from './pdf.service.js';
 import { generateCertificatePng as renderPng } from './png.service.js';
 import { certificateStorage } from './storage.service.js';
+import {
+  artworkSignatureRequirementMessage,
+  assertTemplateSignatureRequirement,
+  isRetiredTemplateKey,
+  requiredSignatureCountForStyle,
+} from './template-rules.js';
 import { lockSignatureRows, validateAndBuildSignatureSnapshots } from './templates.service.js';
 
 export interface IssueCertificateEngineInput {
@@ -218,7 +225,18 @@ export async function resolveTemplateAndSnapshots(
     throw new AppError('INTERNAL_ERROR', 'No active certificate template is available');
   }
 
+  if (isRetiredTemplateKey(template.key)) {
+    throw fieldError(
+      'VALIDATION_ERROR',
+      'templateId',
+      `Template "${template.name}" has been archived and cannot be used for new certificates.`,
+    );
+  }
+
   const baseConfig = normalizeTemplateConfig(template.config);
+  // Artwork templates: the heading is part of the approved artwork and the statement always
+  // comes from the template body ({title}/{date} placeholders) — per-call overrides are ignored.
+  const isArtwork = isArtworkCertificateStyle(template.style);
 
   const templateSnapshot: CertificateTemplateSnapshotDto = {
     templateId: template.id,
@@ -226,9 +244,13 @@ export async function resolveTemplateAndSnapshots(
     name: template.name,
     style: template.style,
     version: template.version,
-    certificateTitle: input.certificateTitle?.trim() || template.defaultTitle,
+    certificateTitle: isArtwork
+      ? template.defaultTitle
+      : input.certificateTitle?.trim() || template.defaultTitle,
     subtitle: settings?.academyTagline ?? template.defaultSubtitle,
-    bodyText: input.description?.trim() || template.defaultBodyText,
+    bodyText: isArtwork
+      ? template.defaultBodyText
+      : input.description?.trim() || template.defaultBodyText,
     issuingAuthority: settings?.academyName ?? template.issuingAuthority,
     config: {
       ...baseConfig,
@@ -254,6 +276,19 @@ export async function resolveTemplateAndSnapshots(
       const activeConfigured = configured.filter(
         (link) => freshById.get(link.signatureId)?.isActive,
       );
+
+      const requiredCount = requiredSignatureCountForStyle(template.style);
+      if (
+        requiredCount !== null &&
+        (configured.length !== requiredCount || activeConfigured.length !== requiredCount)
+      ) {
+        // An inactive configured signatory is never silently replaced by another one.
+        throw fieldError(
+          'VALIDATION_ERROR',
+          'signatures',
+          artworkSignatureRequirementMessage(template.name, template.style),
+        );
+      }
 
       if (
         activeConfigured.length < CERTIFICATE_SIGNATURE_LIMITS.minSignatures ||
@@ -291,11 +326,19 @@ export async function resolveTemplateAndSnapshots(
         'signatures',
         `Select between ${CERTIFICATE_SIGNATURE_LIMITS.minSignatures} and ${CERTIFICATE_SIGNATURE_LIMITS.maxSignatures} active digital signatures for this certificate.`,
       );
+    } else if (requiredSignatureCountForStyle(template.style) !== null) {
+      // Mandatory-signature templates never fall back to placeholder signatories.
+      throw fieldError(
+        'VALIDATION_ERROR',
+        'signatures',
+        artworkSignatureRequirementMessage(template.name, template.style),
+      );
     } else {
       signatureSnapshots = DEFAULT_FALLBACK_SIGNATURES;
     }
   }
 
+  assertTemplateSignatureRequirement(template, signatureSnapshots);
   assertValidSignatureSnapshots(signatureSnapshots);
   return { templateId: template.id, templateSnapshot, signatureSnapshots };
 }
@@ -409,7 +452,11 @@ export async function createCertificateInsideTx(
         signatures: input.signatures,
         requireExplicitSignatures: input.requireExplicitSignatures,
       });
+  // Backend guarantee for every issuance path (course, quiz, manual, generic, reissue, bulk):
+  // no certificate is persisted without its template's mandatory signatures.
+  assertTemplateSignatureRequirement(templateSnapshot, signatureSnapshots);
   assertValidSignatureSnapshots(signatureSnapshots);
+  const isArtwork = isArtworkCertificateStyle(templateSnapshot.style);
 
   const issuedAt = input.issuedAt ?? clock.now();
   const completedAt = input.completedAt ?? issuedAt;
@@ -442,8 +489,11 @@ export async function createCertificateInsideTx(
       recipientStudentCode: input.recipientStudentCode ?? null,
       certificateTitle: templateSnapshot.certificateTitle,
       courseTitle: input.subjectTitle,
-      description: input.description ?? templateSnapshot.bodyText,
-      achievementDetails: input.achievementDetails ?? null,
+      description: isArtwork
+        ? templateSnapshot.bodyText
+        : (input.description ?? templateSnapshot.bodyText),
+      // Participation artwork certificates never carry scores, marks, percentages or ranks.
+      achievementDetails: isArtwork ? null : (input.achievementDetails ?? null),
       completedAt,
       issuedAt,
       status: 'ISSUED',
@@ -1156,6 +1206,19 @@ export const certificatesService = {
             }))
           : undefined);
 
+      // Certificates issued on an archived (retired) template are reissued on the current default
+      // template unless the administrator explicitly selects one.
+      const originalTemplate = original.templateId
+        ? await tx.certificateTemplate.findUnique({
+            where: { id: original.templateId },
+            select: { id: true, isActive: true, key: true },
+          })
+        : null;
+      const reusableOriginalTemplateId =
+        originalTemplate?.isActive && !isRetiredTemplateKey(originalTemplate.key)
+          ? originalTemplate.id
+          : null;
+
       const issued = await createCertificateInsideTx(tx, {
         sourceType: original.sourceType,
         sourceReferenceId: original.sourceReferenceId,
@@ -1168,7 +1231,7 @@ export const certificatesService = {
         recipientName: original.recipientName,
         recipientEmail: original.recipientEmail,
         recipientStudentCode: original.recipientStudentCode,
-        templateId: input.templateId ?? original.templateId,
+        templateId: input.templateId ?? reusableOriginalTemplateId,
         certificateTitle: input.certificateTitle ?? original.certificateTitle,
         subjectTitle: input.subjectTitle ?? original.courseTitle,
         description: input.description ?? original.description,
@@ -1321,7 +1384,9 @@ export const certificatesService = {
       recipientName: cert.recipientName,
       courseTitle: cert.courseTitle,
       description: cert.description,
-      achievementDetails: cert.achievementDetails,
+      achievementDetails: isArtworkCertificateStyle(templateSnapshot.style)
+        ? null
+        : cert.achievementDetails,
       academyName: templateSnapshot.issuingAuthority || 'ASRA Academy',
       completedAt: cert.completedAt.toISOString(),
       issuedAt: cert.issuedAt.toISOString(),
