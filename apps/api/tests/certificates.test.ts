@@ -18,6 +18,7 @@ import { login, registerVerifiedStudent, resetAuthState } from './support/auth.j
 import { apiAs, tokenFor } from './support/catalog.js';
 import { uniqueSuffix } from './support/fixtures.js';
 import { startServer, TestClient } from './support/http.js';
+import { configureQuizoraTemplate } from './support/quizora-template.js';
 
 let baseUrl: string;
 let close: () => Promise<void>;
@@ -33,6 +34,8 @@ after(async () => {
 
 beforeEach(async () => {
   await resetAuthState();
+  // New certificates use the ASRA QUIZORA 2026 template, which requires its two signatures.
+  await configureQuizoraTemplate();
 });
 
 async function newStudent(fullName = 'Amina Al-Mansoor') {

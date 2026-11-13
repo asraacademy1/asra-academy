@@ -13,13 +13,14 @@ import type {
   QuizIssuedCertificateItemDto,
   Paginated,
 } from '@asra/types';
-import type {
-  QuizCertificateBatchItemsQuery,
-  QuizCertificateEligibleQuery,
-  QuizCertificateIssuanceRequestInput,
-  QuizCertificateRetryInput,
-  QuizCertificateSamplePreviewInput,
-  QuizIssuedCertificatesQuery,
+import {
+  isArtworkCertificateStyle,
+  type QuizCertificateBatchItemsQuery,
+  type QuizCertificateEligibleQuery,
+  type QuizCertificateIssuanceRequestInput,
+  type QuizCertificateRetryInput,
+  type QuizCertificateSamplePreviewInput,
+  type QuizIssuedCertificatesQuery,
 } from '@asra/validation';
 import { prisma } from '../../database/prisma.js';
 import type { DbClient } from '../../database/types.js';
@@ -41,6 +42,10 @@ import {
 import { generateCertificatePdf } from '../certificates/pdf.service.js';
 import { generateCertificatePng } from '../certificates/png.service.js';
 import { certificateStorage } from '../certificates/storage.service.js';
+import {
+  assertTemplateSignatureRequirement,
+  templateIssuanceProblem,
+} from '../certificates/template-rules.js';
 import {
   buildQuizCertificateTexts,
   renderQuizCertificateEmail,
@@ -79,19 +84,11 @@ const templateInclude = {
 type TemplateRow = Prisma.CertificateTemplateGetPayload<{ include: typeof templateInclude }>;
 
 function isTemplateValidForIssuance(tpl: TemplateRow): { valid: boolean; reason?: string } {
-  if (!tpl.isActive) {
-    return { valid: false, reason: `Template "${tpl.name}" is inactive.` };
-  }
-  if (tpl.signatures.length > 0) {
-    const activeCount = tpl.signatures.filter((link) => link.signature.isActive).length;
-    if (activeCount < 2 || activeCount > 4) {
-      return {
-        valid: false,
-        reason: `Template "${tpl.name}" must have between 2 and 4 active digital signatures.`,
-      };
-    }
-  }
-  return { valid: true };
+  // Shared rules: archived templates are rejected, and artwork templates (ASRA QUIZORA 2026)
+  // require exactly their Event Coordinator + Director signatures — enforced before any batch
+  // is created, previewed or processed.
+  const problem = templateIssuanceProblem(tpl);
+  return problem ? { valid: false, reason: problem } : { valid: true };
 }
 
 function assertQuizCompleted(
@@ -768,7 +765,11 @@ export const quizCertificatesService = {
         isFallback: false,
       });
     }
-    if (signatureSnapshots.length === 0) {
+    const isArtwork = isArtworkCertificateStyle(tpl.style);
+    if (isArtwork) {
+      // Mandatory signatures — the sample is refused rather than rendered with placeholders.
+      assertTemplateSignatureRequirement(tpl, signatureSnapshots);
+    } else if (signatureSnapshots.length === 0) {
       signatureSnapshots.push(...DEFAULT_FALLBACK_SIGNATURES);
     }
 
@@ -783,13 +784,16 @@ export const quizCertificatesService = {
 
     const sampleCode = 'ASRA-2026-QUIZ-DEMO';
     const now = clock.now();
+    // Artwork template: heading + statement come from the template; no score / rank text.
+    const certificateTitle = isArtwork ? tpl.defaultTitle : texts.certificateTitle;
+    const description = isArtwork ? tpl.defaultBodyText : texts.description;
     const renderInput = {
       certificateNumber: sampleCode,
       recipientName: 'Fatima Zahra Al-Khatib',
-      certificateTitle: texts.certificateTitle,
+      certificateTitle,
       courseTitle: quiz.title,
-      description: texts.description,
-      achievementDetails: texts.achievementDetails,
+      description,
+      achievementDetails: isArtwork ? null : texts.achievementDetails,
       sourceType: 'ACADEMY_QUIZ' as const,
       sourceLabel: 'Academy Quiz',
       completedAt: quiz.closedAt ?? quiz.endsAt,
@@ -803,9 +807,9 @@ export const quizCertificatesService = {
         name: tpl.name,
         style: tpl.style,
         version: tpl.version,
-        certificateTitle: texts.certificateTitle,
+        certificateTitle,
         subtitle: settings?.academyTagline ?? tpl.defaultSubtitle,
-        bodyText: texts.description,
+        bodyText: description,
         issuingAuthority: settings?.academyName ?? tpl.issuingAuthority,
         config: { ...normalizeTemplateConfig(tpl.config), showQrCode: true },
       },

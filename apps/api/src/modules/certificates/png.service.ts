@@ -3,9 +3,10 @@ import type {
   CertificateSignatureSnapshotDto,
   CertificateTemplateSnapshotDto,
 } from '@asra/types';
-import { SOURCE_TYPE_LABELS } from '@asra/validation';
+import { isArtworkCertificateStyle, SOURCE_TYPE_LABELS } from '@asra/validation';
 import QRCode from 'qrcode';
 import sharp from 'sharp';
+import { renderQuizoraCertificatePng } from './quizora-renderer.js';
 import {
   formatCertificateDate,
   readEmblemDataUri,
@@ -931,6 +932,10 @@ function buildPremiumSvg(
  */
 export async function generateCertificatePng(data: CertificateRenderData): Promise<Buffer> {
   const tpl = resolveRenderTemplate(data);
+  if (isArtworkCertificateStyle(tpl.style)) {
+    // ASRA QUIZORA 2026 artwork template: 3072 × 2048 PNG (see quizora-renderer.ts).
+    return renderQuizoraCertificatePng(data);
+  }
   const emblemUri = readEmblemDataUri();
 
   let contentSvg: string;

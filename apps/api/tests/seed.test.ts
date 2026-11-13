@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { PERMISSIONS, USER_ROLES } from '@asra/types';
+import { QUIZORA_2026_TEMPLATE_KEY } from '@asra/validation';
 import { disconnectPrisma, prisma } from '../src/database/prisma.js';
 import { PERMISSION_DEFINITIONS, SYSTEM_ROLES } from '../src/database/seed/access-control.data.js';
 import {
@@ -8,6 +9,7 @@ import {
   seedAccessControl,
 } from '../src/database/seed/access-control.seed.js';
 import { seedCertificateDefaults } from '../src/modules/certificates/bootstrap.js';
+import { LEGACY_CERTIFICATE_TEMPLATES } from '../src/modules/certificates/templates.data.js';
 
 type TransactionArgs = Parameters<typeof prisma.$transaction>;
 
@@ -138,7 +140,7 @@ describe('access-control seed', () => {
 });
 
 describe('certificate defaults seed', () => {
-  it('initializes the 3 default templates and singleton settings idempotently without demo certificates or users', async () => {
+  it('initializes the ASRA QUIZORA 2026 template and singleton settings idempotently without demo certificates or users', async () => {
     await prisma.certificateSettings.deleteMany();
     await prisma.certificateTemplateSignature.deleteMany();
     await prisma.certificateTemplate.deleteMany();
@@ -148,13 +150,24 @@ describe('certificate defaults seed', () => {
     const sigsBefore = await prisma.certificateSignature.count();
 
     const first = await seedCertificateDefaults(prisma);
-    assert.equal(first.templates, 3);
+    assert.equal(first.templates, 2); // Design 1 (default) + Design 2
     assert.equal(first.settingsReady, true);
+    const quizora = await prisma.certificateTemplate.findUniqueOrThrow({
+      where: { key: QUIZORA_2026_TEMPLATE_KEY },
+    });
+    assert.equal(quizora.style, 'QUIZORA_PARTICIPATION');
+    assert.equal(quizora.isActive, true);
+    assert.equal(quizora.isDefault, true);
+    assert.equal(
+      (await prisma.certificateSettings.findUniqueOrThrow({ where: { id: 'default' } }))
+        .defaultTemplateId,
+      quizora.id,
+    );
 
-    // Customize one template & settings to verify repeat seed never overwrites production edits
+    // Customize the template & settings to verify repeat seed never overwrites production edits
     await prisma.certificateTemplate.update({
-      where: { key: 'classic-institutional' },
-      data: { defaultTitle: 'CUSTOM ACADEMY TITLE' },
+      where: { key: QUIZORA_2026_TEMPLATE_KEY },
+      data: { defaultBodyText: 'has successfully attempted the {title} on {date}.' },
     });
     await prisma.certificateSettings.update({
       where: { id: 'default' },
@@ -162,20 +175,83 @@ describe('certificate defaults seed', () => {
     });
 
     const second = await seedCertificateDefaults(prisma);
-    assert.equal(second.templates, 3);
+    assert.equal(second.templates, 2);
     assert.equal(second.settingsReady, true);
 
-    const classic = await prisma.certificateTemplate.findUniqueOrThrow({
-      where: { key: 'classic-institutional' },
+    const reloaded = await prisma.certificateTemplate.findUniqueOrThrow({
+      where: { key: QUIZORA_2026_TEMPLATE_KEY },
     });
     const settings = await prisma.certificateSettings.findUniqueOrThrow({
       where: { id: 'default' },
     });
-    assert.equal(classic.defaultTitle, 'CUSTOM ACADEMY TITLE');
+    assert.equal(reloaded.defaultBodyText, 'has successfully attempted the {title} on {date}.');
     assert.equal(settings.academyName, 'ASRA Custom Production Title');
 
     assert.equal(await prisma.user.count(), usersBefore);
     assert.equal(await prisma.certificate.count(), certsBefore);
     assert.equal(await prisma.certificateSignature.count(), sigsBefore);
+  });
+
+  it('archives (never deletes) pre-existing legacy templates and moves the default to QUIZORA', async () => {
+    await prisma.certificateSettings.deleteMany();
+    await prisma.certificateTemplateSignature.deleteMany();
+    await prisma.certificateTemplate.deleteMany();
+
+    // Simulate a production database seeded before the replacement (Classic = default).
+    const legacyIds: string[] = [];
+    for (const tpl of LEGACY_CERTIFICATE_TEMPLATES) {
+      const row = await prisma.certificateTemplate.create({
+        data: {
+          key: tpl.key,
+          name: tpl.name,
+          style: tpl.style,
+          description: tpl.description,
+          defaultTitle: tpl.defaultTitle,
+          defaultSubtitle: tpl.defaultSubtitle,
+          defaultBodyText: tpl.defaultBodyText,
+          issuingAuthority: tpl.issuingAuthority,
+          config: tpl.config as unknown as object,
+          isActive: true,
+          isDefault: tpl.isDefault,
+        },
+      });
+      legacyIds.push(row.id);
+    }
+    await prisma.certificateSettings.create({
+      data: { id: 'default', defaultTemplateId: legacyIds[0]! },
+    });
+
+    const result = await seedCertificateDefaults(prisma);
+    assert.equal(result.templates, 5, 'legacy rows are kept for history');
+
+    const legacyRows = await prisma.certificateTemplate.findMany({
+      where: { id: { in: legacyIds } },
+    });
+    assert.equal(legacyRows.length, 3);
+    assert.ok(legacyRows.every((r) => !r.isActive && !r.isDefault));
+
+    const quizora = await prisma.certificateTemplate.findUniqueOrThrow({
+      where: { key: QUIZORA_2026_TEMPLATE_KEY },
+    });
+    assert.equal(quizora.isActive, true);
+    assert.equal(quizora.isDefault, true);
+    const settings = await prisma.certificateSettings.findUniqueOrThrow({
+      where: { id: 'default' },
+    });
+    assert.equal(settings.defaultTemplateId, quizora.id);
+
+    const archivedAudits = await prisma.certificateAuditLog.findMany({
+      where: { action: 'template.archived', entityId: { in: legacyIds } },
+    });
+    assert.equal(archivedAudits.length, 3);
+
+    // Idempotent: a second run writes nothing new
+    await seedCertificateDefaults(prisma);
+    assert.equal(
+      await prisma.certificateAuditLog.count({
+        where: { action: 'template.archived', entityId: { in: legacyIds } },
+      }),
+      3,
+    );
   });
 });

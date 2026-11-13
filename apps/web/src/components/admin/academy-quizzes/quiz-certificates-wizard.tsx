@@ -98,6 +98,20 @@ const MODE_OPTIONS: {
 
 function isValidTemplate(tpl: CertificateTemplateDto): { valid: boolean; reason?: string } {
   if (!tpl.isActive) return { valid: false, reason: 'Inactive template' };
+  if (tpl.requiredSignatureCount !== null) {
+    // Artwork template (ASRA QUIZORA 2026): exactly the Event Coordinator + Director signatures.
+    const activeCount = tpl.signatures.filter((s) => s.signature.isActive).length;
+    if (
+      tpl.signatures.length !== tpl.requiredSignatureCount ||
+      activeCount !== tpl.requiredSignatureCount
+    ) {
+      return {
+        valid: false,
+        reason: `Requires exactly ${tpl.requiredSignatureCount} active signatures (Event Coordinator & Director)`,
+      };
+    }
+    return { valid: true };
+  }
   if (tpl.signatures.length > 0) {
     const activeCount = tpl.signatures.filter((s) => s.signature.isActive).length;
     if (activeCount < 2 || activeCount > 4) {
@@ -808,9 +822,9 @@ export function QuizCertificatesWizard({
             ) : validTemplates.length === 0 ? (
               <Alert tone="warning" title="No active & valid certificate templates available">
                 <p className="type-body-sm">
-                  Every certificate requires an active template with either default institutional
-                  signatories or 2–4 active digital signatures. Configure or activate a template in
-                  the Certificate Templates module first.
+                  No certificate can be issued without its required signatures. Open ASRA QUIZORA
+                  2026 — Certificate of Participation in the Certificate Templates module and assign
+                  both the Event Coordinator and Director signatures first.
                 </p>
                 <div className="mt-3">
                   <Button asChild size="sm" variant="outline">
@@ -1002,9 +1016,11 @@ export function QuizCertificatesWizard({
                         certificateTitle={activePreviewTemplate.defaultTitle}
                         recipientName="Fatima Zahra Al-Khatib"
                         bodyText={
-                          previewSlot === 'PARTICIPATION'
-                            ? 'for actively participating and completing the Academy Quiz'
-                            : `in recognition of securing Rank #${previewSlot === 'RANK_1' ? 1 : previewSlot === 'RANK_2' ? 2 : previewSlot === 'RANK_3' ? 3 : 4} in the Academy Quiz`
+                          activePreviewTemplate.requiredSignatureCount !== null
+                            ? activePreviewTemplate.defaultBodyText
+                            : previewSlot === 'PARTICIPATION'
+                              ? 'for actively participating and completing the Academy Quiz'
+                              : `in recognition of securing Rank #${previewSlot === 'RANK_1' ? 1 : previewSlot === 'RANK_2' ? 2 : previewSlot === 'RANK_3' ? 3 : 4} in the Academy Quiz`
                         }
                         subjectTitle={quizTitle}
                         achievementDetails={

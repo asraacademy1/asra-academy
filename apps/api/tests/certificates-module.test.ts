@@ -36,6 +36,7 @@ import { Prisma } from '../src/generated/prisma/client.js';
 import { disconnectRedis } from '../src/lib/redis.js';
 import { generateCertificatePdf } from '../src/modules/certificates/pdf.service.js';
 import { generateCertificatePng } from '../src/modules/certificates/png.service.js';
+import { LEGACY_CERTIFICATE_TEMPLATES } from '../src/modules/certificates/templates.data.js';
 import {
   CertificateStorageService,
   setCertificateStorageForTests,
@@ -327,165 +328,119 @@ describe('Generic Certificate Management Module — End-to-End', () => {
     const sig4Inactive = sig4Res.body.data;
     const sig5 = sig5Res.body.data;
 
-    // Fetch all 3 seeded initial templates
+    // Only the ASRA QUIZORA 2026 artwork template is offered (legacy layouts are archived)
     const tplList = await api<CertificateTemplateDto[]>('GET', '/admin/certificates/templates');
     expectStatus(tplList, 200);
-    assert.equal(tplList.body.data.length, 3);
-    assert.deepEqual(tplList.body.data.map((t) => t.style).sort(), [
-      'CLASSIC_INSTITUTIONAL',
-      'MODERN_MINIMAL',
-      'PREMIUM_ACHIEVEMENT',
+    // Two independently selectable artwork designs (Design 1 is the default)
+    const activeTemplates = tplList.body.data.filter((t) => t.isActive);
+    assert.deepEqual(activeTemplates.map((t) => t.style).sort(), [
+      'QUIZORA_PARTICIPATION',
+      'QUIZORA_PARTICIPATION_DESIGN_2',
     ]);
+    const quizora = activeTemplates.find((t) => t.style === 'QUIZORA_PARTICIPATION')!;
+    assert.equal(quizora.style, 'QUIZORA_PARTICIPATION');
+    assert.equal(quizora.category, 'QUIZ_PARTICIPATION');
+    assert.equal(quizora.requiredSignatureCount, 2);
+    assert.equal(quizora.isDefault, true);
+    assert.equal(quizora.isRetired, false);
 
-    const classic = tplList.body.data.find((t) => t.style === 'CLASSIC_INSTITUTIONAL')!;
-    const modern = tplList.body.data.find((t) => t.style === 'MODERN_MINIMAL')!;
-    const premium = tplList.body.data.find((t) => t.style === 'PREMIUM_ACHIEVEMENT')!;
+    // Mandatory signatures: preview is refused until both signatures are configured
+    const unconfiguredPreview = await fetch(
+      `${baseUrl}/api/v1/admin/certificates/templates/${quizora.id}/preview`,
+      { headers: { authorization: `Bearer ${adminToken}` } },
+    );
+    assert.equal(unconfiguredPreview.status, 422);
+
+    const placement = (id: string, sortOrder: number) => ({
+      signatureId: id,
+      sortOrder,
+      positionLabel: sortOrder === 0 ? 'Event Coordinator' : 'Director',
+      showName: true,
+      showDesignation: true,
+    });
 
     // Reject < 2 signatures
-    const tooFew = await api('PATCH', `/admin/certificates/templates/${classic.id}`, {
-      signatures: [
-        {
-          signatureId: sig1.id,
-          sortOrder: 0,
-          positionLabel: 'Left',
-          showName: true,
-          showDesignation: true,
-        },
-      ],
+    const tooFew = await api('PATCH', `/admin/certificates/templates/${quizora.id}`, {
+      signatures: [placement(sig1.id, 0)],
     });
     assert.equal(tooFew.status, 422);
 
-    // Reject > 4 signatures
+    // Reject > 4 signatures (generic limit) and 3 signatures (artwork requires exactly 2)
     const sig4Active = await uploadSignatureMultipart(
       adminToken,
       { fullName: 'Hana Mansoor', designation: 'Dean of Faculty' },
       png,
     );
-    const tooMany = await api('PATCH', `/admin/certificates/templates/${classic.id}`, {
-      signatures: [sig1, sig2, sig3, sig5, sig4Active.body.data].map((s, i) => ({
-        signatureId: s.id,
-        sortOrder: i,
-        positionLabel: `Slot ${i + 1}`,
-        showName: true,
-        showDesignation: true,
-      })),
+    const tooMany = await api('PATCH', `/admin/certificates/templates/${quizora.id}`, {
+      signatures: [sig1, sig2, sig3, sig5, sig4Active.body.data].map((s, i) => placement(s.id, i)),
     });
     assert.equal(tooMany.status, 422);
+    const three = await api('PATCH', `/admin/certificates/templates/${quizora.id}`, {
+      signatures: [sig1, sig2, sig3].map((s, i) => placement(s.id, i)),
+    });
+    assert.equal(three.status, 422);
 
     // Reject duplicate signature ID
-    const duplicateSig = await api('PATCH', `/admin/certificates/templates/${classic.id}`, {
-      signatures: [
-        {
-          signatureId: sig1.id,
-          sortOrder: 0,
-          positionLabel: 'Left',
-          showName: true,
-          showDesignation: true,
-        },
-        {
-          signatureId: sig1.id,
-          sortOrder: 1,
-          positionLabel: 'Right',
-          showName: true,
-          showDesignation: true,
-        },
-      ],
+    const duplicateSig = await api('PATCH', `/admin/certificates/templates/${quizora.id}`, {
+      signatures: [placement(sig1.id, 0), placement(sig1.id, 1)],
     });
     assert.equal(duplicateSig.status, 422);
 
     // Reject inactive signature
-    const inactiveSigErr = await api('PATCH', `/admin/certificates/templates/${classic.id}`, {
-      signatures: [
-        {
-          signatureId: sig1.id,
-          sortOrder: 0,
-          positionLabel: 'Left',
-          showName: true,
-          showDesignation: true,
-        },
-        {
-          signatureId: sig4Inactive.id,
-          sortOrder: 1,
-          positionLabel: 'Right',
-          showName: true,
-          showDesignation: true,
-        },
-      ],
+    const inactiveSigErr = await api('PATCH', `/admin/certificates/templates/${quizora.id}`, {
+      signatures: [placement(sig1.id, 0), placement(sig4Inactive.id, 1)],
     });
     assert.equal(inactiveSigErr.status, 422);
 
-    // Valid configuration with 3 active unique signatures + custom title/colors increments version
-    const updatedClassic = await api<CertificateTemplateDto>(
+    // The heading is part of the approved artwork
+    const headingChange = await api('PATCH', `/admin/certificates/templates/${quizora.id}`, {
+      defaultTitle: 'DIPLOMA OF INSTITUTIONAL EXCELLENCE',
+    });
+    assert.equal(headingChange.status, 422);
+
+    // Valid configuration: Event Coordinator + Director, editable statement; increments version
+    const updated = await api<CertificateTemplateDto>(
       'PATCH',
-      `/admin/certificates/templates/${classic.id}`,
+      `/admin/certificates/templates/${quizora.id}`,
       {
-        defaultTitle: 'DIPLOMA OF INSTITUTIONAL EXCELLENCE',
-        defaultBodyText: 'is hereby conferred this distinction upon completing',
-        signatures: [
-          {
-            signatureId: sig1.id,
-            sortOrder: 0,
-            positionLabel: 'Left',
-            showName: true,
-            showDesignation: true,
-          },
-          {
-            signatureId: sig2.id,
-            sortOrder: 1,
-            positionLabel: 'Center',
-            showName: true,
-            showDesignation: false,
-          },
-          {
-            signatureId: sig3.id,
-            sortOrder: 2,
-            positionLabel: 'Right',
-            showName: true,
-            showDesignation: true,
-          },
-        ],
+        defaultBodyText:
+          'has successfully attempted the {title}, a National Level Quiz Competition organized by **ASRA Academy**\non {date}.',
+        signatures: [placement(sig1.id, 0), placement(sig2.id, 1)],
       },
     );
-    expectStatus(updatedClassic, 200);
-    assert.equal(updatedClassic.body.data.version, classic.version + 1);
-    assert.equal(updatedClassic.body.data.signatures.length, 3);
+    expectStatus(updated, 200);
+    assert.equal(updated.body.data.version, quizora.version + 1);
+    assert.equal(updated.body.data.signatures.length, 2);
 
-    // Download live sample PDFs & PNGs for all 3 initial templates dynamically
-    for (const tpl of [classic, modern, premium]) {
-      const pdfRes = await fetch(
-        `${baseUrl}/api/v1/admin/certificates/templates/${tpl.id}/preview`,
-        {
-          headers: { authorization: `Bearer ${adminToken}` },
-        },
-      );
-      assert.equal(pdfRes.status, 200);
-      assert.equal(pdfRes.headers.get('content-type'), 'application/pdf');
-      const buf = Buffer.from(await pdfRes.arrayBuffer());
-      assert.ok(buf.subarray(0, 5).equals(Buffer.from('%PDF-')));
-      assert.ok(buf.length > 2500, `Expected real rendered PDF for ${tpl.style}`);
+    // Live sample PDF & PNG previews of the artwork template
+    const pdfRes = await fetch(
+      `${baseUrl}/api/v1/admin/certificates/templates/${quizora.id}/preview`,
+      {
+        headers: { authorization: `Bearer ${adminToken}` },
+      },
+    );
+    assert.equal(pdfRes.status, 200);
+    assert.equal(pdfRes.headers.get('content-type'), 'application/pdf');
+    const buf = Buffer.from(await pdfRes.arrayBuffer());
+    assert.ok(buf.subarray(0, 5).equals(Buffer.from('%PDF-')));
+    assert.ok(buf.length > 2500, 'Expected real rendered PDF for QUIZORA_PARTICIPATION');
 
-      const pngRes = await fetch(
-        `${baseUrl}/api/v1/admin/certificates/templates/${tpl.id}/preview/png`,
-        {
-          headers: { authorization: `Bearer ${adminToken}` },
-        },
-      );
-      assert.equal(pngRes.status, 200);
-      assert.equal(pngRes.headers.get('content-type'), 'image/png');
-      assert.equal(pngRes.headers.get('cache-control'), 'no-store');
-      const pngBuf = Buffer.from(await pngRes.arrayBuffer());
-      assert.equal(
-        pngBuf.subarray(0, 8).toString('hex'),
-        '89504e470d0a1a0a',
-        `Expected PNG magic bytes for ${tpl.style}`,
-      );
-      const pngMeta = await sharp(pngBuf).metadata();
-      assert.equal(pngMeta.width, 1684);
-      assert.equal(pngMeta.height, 1190);
-    }
+    const pngRes = await fetch(
+      `${baseUrl}/api/v1/admin/certificates/templates/${quizora.id}/preview/png`,
+      { headers: { authorization: `Bearer ${adminToken}` } },
+    );
+    assert.equal(pngRes.status, 200);
+    assert.equal(pngRes.headers.get('content-type'), 'image/png');
+    assert.equal(pngRes.headers.get('cache-control'), 'no-store');
+    const pngBuf = Buffer.from(await pngRes.arrayBuffer());
+    assert.equal(pngBuf.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    const pngMeta = await sharp(pngBuf).metadata();
+    assert.equal(pngMeta.width, 3072);
+    assert.equal(pngMeta.height, 2048);
 
-    // Verify long names + 4 signature buffers across all 3 templates directly
-    for (const tpl of [classic, modern, premium]) {
+    // Historical rendering: the three archived layouts still render long names + 4 signatures
+    // from immutable snapshots (certificates issued before the replacement stay downloadable).
+    for (const tpl of LEGACY_CERTIFICATE_TEMPLATES) {
       const pdf = await generateCertificatePdf({
         certificateNumber: 'ASRA-2026-LONG-9999',
         recipientName: 'Abdullah Muhammad Al-Qurtubi Al-Andalusi Ibn Hayyan Extra Long Name',
@@ -499,11 +454,11 @@ describe('Generic Certificate Management Module — End-to-End', () => {
         verificationUrl: 'https://asraacademy.org/verify/ASRA-2026-LONG-9999',
         status: 'ISSUED',
         templateSnapshot: {
-          templateId: tpl.id,
+          templateId: null,
           key: tpl.key,
           name: tpl.name,
           style: tpl.style,
-          version: tpl.version,
+          version: 1,
           certificateTitle: tpl.defaultTitle,
           subtitle: tpl.defaultSubtitle,
           bodyText: tpl.defaultBodyText,
@@ -557,10 +512,9 @@ describe('Generic Certificate Management Module — End-to-End', () => {
 
     const templates = (await api<CertificateTemplateDto[]>('GET', '/admin/certificates/templates'))
       .body.data;
-    const premium = templates.find((t) => t.style === 'PREMIUM_ACHIEVEMENT')!;
+    const premium = templates.find((t) => t.style === 'QUIZORA_PARTICIPATION' && t.isActive)!;
 
     await api('PATCH', `/admin/certificates/templates/${premium.id}`, {
-      defaultTitle: 'EXCELLENCE HONOR v1',
       signatures: [
         {
           signatureId: s1.id,
@@ -667,7 +621,9 @@ describe('Generic Certificate Management Module — End-to-End', () => {
     // Original issued certificate MUST keep its frozen snapshots intact
     const fetched = await api<AdminCertificateListItem>('GET', `/admin/certificates/${cert.id}`);
     expectStatus(fetched, 200);
-    assert.equal(fetched.body.data.certificateTitle, 'EXCELLENCE HONOR v1');
+    // Artwork template: the heading is fixed by the artwork and achievement text is never stored
+    assert.equal(fetched.body.data.certificateTitle, 'Certificate of Participation');
+    assert.equal(fetched.body.data.achievementDetails, null);
     assert.deepEqual(
       fetched.body.data.signatureSnapshots?.map((x) => `${x.fullName}|${x.designation}`),
       ['Person Alpha|Original Founder Title', 'Person Beta|Original Director Title'],
@@ -721,7 +677,7 @@ describe('Generic Certificate Management Module — End-to-End', () => {
     const templates = (
       await adminApi<CertificateTemplateDto[]>('GET', '/admin/certificates/templates')
     ).body.data;
-    const modern = templates.find((t) => t.style === 'MODERN_MINIMAL')!;
+    const modern = templates.find((t) => t.style === 'QUIZORA_PARTICIPATION' && t.isActive)!;
 
     await adminApi('PATCH', `/admin/certificates/templates/${modern.id}`, {
       signatures: [
@@ -793,7 +749,9 @@ describe('Generic Certificate Management Module — End-to-End', () => {
     expectStatus(quizClaim1, 201);
     assert.equal(quizClaim1.body.data.sourceType, 'ACADEMY_QUIZ');
     assert.equal(quizClaim1.body.data.academyQuizId, quiz.id);
-    assert.match(quizClaim1.body.data.achievementDetails ?? '', /92%/);
+    // Participation certificates never expose the quiz score (92%) anywhere
+    assert.equal(quizClaim1.body.data.achievementDetails, null);
+    assert.equal(quizClaim1.body.data.certificateTitle, 'Certificate of Participation');
 
     // Idempotent second claim returns exact same certificateNumber
     const quizClaim2 = await studentApi<CertificateDto>(
@@ -901,6 +859,8 @@ describe('Generic Certificate Management Module — End-to-End', () => {
     );
     expectStatus(publicVerify, 200);
     const verifyText = JSON.stringify(publicVerify.body.data);
+    assert.ok(!verifyText.includes('92'), 'Quiz score must never appear on public verify');
+    assert.equal(publicVerify.body.data.achievementDetails, null);
     assert.ok(!verifyText.includes(email), 'Student email must never appear on public verify');
     assert.ok(
       !verifyText.includes(student.id),
@@ -916,7 +876,7 @@ describe('Generic Certificate Management Module — End-to-End', () => {
     expectStatus(overview, 200);
     assert.equal(overview.body.data.academyQuizzesCount, 1);
     assert.equal(overview.body.data.competitionsCount >= 2, true);
-    assert.equal(overview.body.data.activeTemplates, 3);
+    assert.equal(overview.body.data.activeTemplates, 2);
     assert.equal(overview.body.data.activeSignatures, 2);
 
     const settingsUpdate = await adminApi<CertificateSettingsDto>(
@@ -1018,7 +978,7 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
     const templates = (
       await adminApi<CertificateTemplateDto[]>('GET', '/admin/certificates/templates')
     ).body.data;
-    const classic = templates.find((t) => t.style === 'CLASSIC_INSTITUTIONAL')!;
+    const classic = templates.find((t) => t.style === 'QUIZORA_PARTICIPATION' && t.isActive)!;
     expectStatus(
       await adminApi('PATCH', `/admin/certificates/templates/${classic.id}`, {
         signatures: [
@@ -1253,8 +1213,9 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
     const templates = (
       await adminApi<CertificateTemplateDto[]>('GET', '/admin/certificates/templates')
     ).body.data;
-    const modern = templates.find((t) => t.style === 'MODERN_MINIMAL')!;
-    const classic = templates.find((t) => t.style === 'CLASSIC_INSTITUTIONAL')!;
+    // Single active artwork template (requires exactly its two signatures)
+    const modern = templates.find((t) => t.style === 'QUIZORA_PARTICIPATION' && t.isActive)!;
+    const classic = modern;
 
     // Unconfigured 0-signature template cannot be used for /admin/certificates/issue without explicit 2-4 signatures
     const unconfiguredAdminIssue = await adminApi('POST', '/admin/certificates/issue', {
@@ -1305,7 +1266,7 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
     // Concurrent template updates (4 parallel PATCH requests) must serialize without 409 or corrupted state
     const concurrentTplUpdates = await Promise.all([
       adminApi<CertificateTemplateDto>('PATCH', `/admin/certificates/templates/${classic.id}`, {
-        defaultTitle: 'TITLE A',
+        defaultBodyText: 'has successfully attempted the {title} — statement A — on {date}.',
         signatures: [
           {
             signatureId: s1.id,
@@ -1324,7 +1285,7 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
         ],
       }),
       adminApi<CertificateTemplateDto>('PATCH', `/admin/certificates/templates/${classic.id}`, {
-        defaultTitle: 'TITLE B',
+        defaultBodyText: 'has successfully attempted the {title} — statement B — on {date}.',
         signatures: [
           {
             signatureId: s2.id,
@@ -1343,7 +1304,7 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
         ],
       }),
       adminApi<CertificateTemplateDto>('PATCH', `/admin/certificates/templates/${classic.id}`, {
-        defaultTitle: 'TITLE C',
+        defaultBodyText: 'has successfully attempted the {title} — statement C — on {date}.',
         signatures: [
           {
             signatureId: s1.id,
@@ -1369,7 +1330,7 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
         ],
       }),
       adminApi<CertificateTemplateDto>('PATCH', `/admin/certificates/templates/${classic.id}`, {
-        defaultTitle: 'TITLE D',
+        defaultBodyText: 'has successfully attempted the {title} — statement D — on {date}.',
         signatures: [
           {
             signatureId: s1.id,
@@ -1388,11 +1349,12 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
         ],
       }),
     ]);
-    for (const r of concurrentTplUpdates) expectStatus(r, 200);
+    // Updates serialize cleanly; the 3-signature update (C) is rejected — artwork needs exactly 2
+    concurrentTplUpdates.forEach((r, i) => expectStatus(r, i === 2 ? 422 : 200));
     const savedLinks = await prisma.certificateTemplateSignature.findMany({
       where: { templateId: classic.id },
     });
-    assert.ok(savedLinks.length >= 2 && savedLinks.length <= 3);
+    assert.equal(savedLinks.length, 2);
 
     // Also configure modern with [s1, s2], verify s1 deactivation is blocked until swapped
     expectStatus(
@@ -1529,8 +1491,8 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
       const templates = (
         await adminApi<CertificateTemplateDto[]>('GET', '/admin/certificates/templates')
       ).body.data;
-      const classic = templates.find((t) => t.style === 'CLASSIC_INSTITUTIONAL')!;
-      const premium = templates.find((t) => t.style === 'PREMIUM_ACHIEVEMENT')!;
+      const classic = templates.find((t) => t.style === 'QUIZORA_PARTICIPATION' && t.isActive)!;
+      const premium = classic;
 
       const email = await registerVerifiedStudent(client, uniqueEmail('cloudstu'));
       const session = await login(client, email);
@@ -1641,30 +1603,36 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
       const issuedPngBytes = Buffer.from(await pngRes.arrayBuffer());
       assert.equal(issuedPngBytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
 
-      // Inspect actual rendered PNG pixels: dimensions 1684x1190, Classic ivory center/corner, non-empty QR & signature pixels
+      // Inspect actual rendered PNG pixels: 3072x2048 (2× the 1536x1024 reference artwork)
       const issuedMeta = await sharp(issuedPngBytes).metadata();
-      assert.equal(issuedMeta.width, 1684);
-      assert.equal(issuedMeta.height, 1190);
+      assert.equal(issuedMeta.width, 3072);
+      assert.equal(issuedMeta.height, 2048);
       const { data: issuedRaw } = await sharp(issuedPngBytes)
         .ensureAlpha()
         .raw()
         .toBuffer({ resolveWithObject: true });
 
+      const PNG_W = 3072;
       const sampleRgb = (raw: Buffer, x: number, y: number) => {
-        const idx = (y * 1684 + x) * 4;
+        const idx = (y * PNG_W + x) * 4;
         return [raw[idx]!, raw[idx + 1]!, raw[idx + 2]!] as const;
       };
-      // Top-left ivory border area (~x:12, y:12) for Classic = #FDFBF7
-      const cornerRgb = sampleRgb(issuedRaw, 12, 12);
-      assert.ok(cornerRgb[0] > 245 && cornerRgb[1] > 245 && cornerRgb[2] > 240);
+      // Artwork background: navy outer frame at the far-left edge, cream paper left of the name rule
+      const frameRgb = sampleRgb(issuedRaw, 6, 1024);
+      assert.ok(
+        frameRgb[2] > frameRgb[0],
+        `Expected navy artwork frame, got ${frameRgb.join(',')}`,
+      );
+      const paperRgb = sampleRgb(issuedRaw, 560, 1120);
+      assert.ok(paperRgb[0] > 225 && paperRgb[1] > 220 && paperRgb[2] > 205);
 
-      // Center pixels of ISSUED cert must NOT contain diagonal crimson watermark ink
+      // Cream paper pixels of an ISSUED cert must NOT contain diagonal crimson watermark ink
       const countRedTintPixels = (raw: Buffer) => {
         let count = 0;
-        for (let py = 460; py < 730; py += 2) {
-          for (let px = 620; px < 1060; px += 2) {
+        for (let py = 820; py < 1560; py += 3) {
+          for (let px = 700; px < 2380; px += 3) {
             const [r, g, b] = sampleRgb(raw, px, py);
-            if (r - g > 12 && r - b > 12) count++;
+            if (r > 200 && r - g > 18 && r - b > 18 && g < 225) count++;
           }
         }
         return count;
@@ -1760,16 +1728,12 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
         { headers: { authorization: `Bearer ${adminToken}` } },
       );
       assert.equal(activePngRes.status, 200);
-      const { data: premRaw } = await sharp(Buffer.from(await activePngRes.arrayBuffer()))
+      const activePngBytes = Buffer.from(await activePngRes.arrayBuffer());
+      assert.equal((await sharp(activePngBytes).metadata()).width, 3072);
+      const { data: premRaw } = await sharp(activePngBytes)
         .ensureAlpha()
         .raw()
         .toBuffer({ resolveWithObject: true });
-      // Premium top crest bar (~x:400, y:40) is deep forest green #012114 (distinct from Classic #FDFBF7)
-      const premHeaderRgb = sampleRgb(premRaw, 400, 40);
-      assert.ok(
-        premHeaderRgb[0] < 20 && premHeaderRgb[1] < 50 && premHeaderRgb[2] < 35,
-        `Expected deep forest header in Premium PNG, got ${premHeaderRgb.join(',')}`,
-      );
 
       const reissueSecond = await adminApi<CertificateDto>(
         'POST',
@@ -1904,9 +1868,9 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
     const templates = (
       await adminApi<CertificateTemplateDto[]>('GET', '/admin/certificates/templates')
     ).body.data;
-    const classic = templates.find((t) => t.style === 'CLASSIC_INSTITUTIONAL')!;
+    const classic = templates.find((t) => t.style === 'QUIZORA_PARTICIPATION' && t.isActive)!;
 
-    // Enable showSourceLabel and set footerNote on Classic
+    // Config flags are stored (the artwork layout itself is fixed)
     expectStatus(
       await adminApi('PATCH', `/admin/certificates/templates/${classic.id}`, {
         config: {
@@ -1999,7 +1963,8 @@ describe('Phase 17 Blocker Fixes — Concurrency, Idempotency, 2–4 Rules & Clo
       assert.equal(dlPngRes.status, 200);
       assert.equal(dlPngRes.headers.get('content-type'), 'image/png');
       const dlPngBuf = Buffer.from(await dlPngRes.arrayBuffer());
-      assert.equal((await sharp(dlPngBuf).metadata()).width, 1684);
+      // 120-char single-word name and 180-char title are fitted/ellipsized inside the artwork
+      assert.equal((await sharp(dlPngBuf).metadata()).width, 3072);
 
       // Admin generic issuance with unknown linked courseId returns 422 VALIDATION_ERROR cleanly
       const badLinkedCourse = await adminApi('POST', '/admin/certificates/issue', {

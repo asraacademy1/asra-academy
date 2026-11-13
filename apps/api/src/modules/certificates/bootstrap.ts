@@ -1,16 +1,18 @@
-import type {
-  AdminCertificateListItem,
-  CertificateDto,
-  CertificateLifecycleStatus,
-  CertificateSettingsDto,
-  CertificateSignatureDto,
-  CertificateSignatureSnapshotDto,
-  CertificateTemplateConfigDto,
-  CertificateTemplateDto,
-  CertificateTemplateSignatureDto,
-  CertificateTemplateSnapshotDto,
-  CertificateTemplateStyle,
+import {
+  certificateTemplateCategoryOf,
+  type AdminCertificateListItem,
+  type CertificateDto,
+  type CertificateLifecycleStatus,
+  type CertificateSettingsDto,
+  type CertificateSignatureDto,
+  type CertificateSignatureSnapshotDto,
+  type CertificateTemplateConfigDto,
+  type CertificateTemplateDto,
+  type CertificateTemplateSignatureDto,
+  type CertificateTemplateSnapshotDto,
+  type CertificateTemplateStyle,
 } from '@asra/types';
+import { isArtworkCertificateStyle } from '@asra/validation';
 import { env } from '../../config/env.js';
 import { prisma } from '../../database/prisma.js';
 import { SEED_TRANSACTION_OPTIONS } from '../../database/seed/access-control.seed.js';
@@ -25,7 +27,8 @@ import type {
   PrismaClient,
 } from '../../generated/prisma/client.js';
 import { certificateStorage } from './storage.service.js';
-import { INITIAL_CERTIFICATE_TEMPLATES } from './templates.data.js';
+import { isRetiredTemplateKey, requiredSignatureCountForStyle } from './template-rules.js';
+import { ACTIVE_CERTIFICATE_TEMPLATES, LEGACY_CERTIFICATE_TEMPLATES } from './templates.data.js';
 
 export const DEFAULT_FALLBACK_SIGNATURES: CertificateSignatureSnapshotDto[] = [
   {
@@ -55,59 +58,120 @@ export type TemplateWithSignatures = CertificateTemplate & {
   _count?: { certificates: number };
 };
 
+/**
+ * Idempotent certificate bootstrap (runs before template listing / issuance):
+ *  1. seeds the active templates (ASRA QUIZORA 2026 — Certificate of Participation) if missing;
+ *  2. retires the legacy Phase 13/17 templates by ARCHIVING them (is_active = false,
+ *     is_default = false) — never deleting: issued certificates, their template & signature
+ *     snapshots, verification records and audit history are untouched;
+ *  3. guarantees an active default template and points the settings default at it.
+ * Every write is conditional, so steady-state calls perform reads only.
+ */
 export async function ensureCertificateDefaults(db: DbClient = prisma): Promise<void> {
   const [existingTemplates, existingSettings] = await Promise.all([
     db.certificateTemplate.findMany({
-      select: { id: true, key: true, isDefault: true },
+      select: { id: true, key: true, isDefault: true, isActive: true },
     }),
-    db.certificateSettings.findUnique({ where: { id: 'default' }, select: { id: true } }),
+    db.certificateSettings.findUnique({
+      where: { id: 'default' },
+      select: { id: true, defaultTemplateId: true },
+    }),
   ]);
 
   const existingByKey = new Map(existingTemplates.map((t) => [t.key, t]));
-  const missing = INITIAL_CERTIFICATE_TEMPLATES.filter((tpl) => !existingByKey.has(tpl.key));
+  const activeIds = new Set(
+    existingTemplates.filter((t) => t.isActive && !isRetiredTemplateKey(t.key)).map((t) => t.id),
+  );
+  let defaultId =
+    existingTemplates.find((t) => t.isDefault && t.isActive && !isRetiredTemplateKey(t.key))?.id ??
+    null;
 
-  if (missing.length > 0) {
-    const hasAnyDefault = existingTemplates.some((t) => t.isDefault);
-    for (const tpl of missing) {
-      await db.certificateTemplate.upsert({
-        where: { key: tpl.key },
-        update: {},
-        create: {
-          key: tpl.key,
-          name: tpl.name,
-          style: tpl.style,
-          description: tpl.description,
-          defaultTitle: tpl.defaultTitle,
-          defaultSubtitle: tpl.defaultSubtitle,
-          defaultBodyText: tpl.defaultBodyText,
-          issuingAuthority: tpl.issuingAuthority,
-          config: tpl.config as unknown as Prisma.InputJsonValue,
-          isActive: true,
-          isDefault: !hasAnyDefault && tpl.isDefault,
-        },
+  for (const tpl of ACTIVE_CERTIFICATE_TEMPLATES) {
+    if (existingByKey.has(tpl.key)) continue;
+    const created = await db.certificateTemplate.upsert({
+      where: { key: tpl.key },
+      update: {},
+      create: {
+        key: tpl.key,
+        name: tpl.name,
+        style: tpl.style,
+        description: tpl.description,
+        defaultTitle: tpl.defaultTitle,
+        defaultSubtitle: tpl.defaultSubtitle,
+        defaultBodyText: tpl.defaultBodyText,
+        issuingAuthority: tpl.issuingAuthority,
+        config: tpl.config as unknown as Prisma.InputJsonValue,
+        isActive: true,
+        isDefault: false,
+      },
+      select: { id: true, isActive: true },
+    });
+    if (created.isActive) activeIds.add(created.id);
+  }
+
+  const toRetire = existingTemplates.filter(
+    (t) => isRetiredTemplateKey(t.key) && (t.isActive || t.isDefault),
+  );
+  if (toRetire.length > 0) {
+    const retired = await db.certificateTemplate.updateMany({
+      where: {
+        id: { in: toRetire.map((t) => t.id) },
+        OR: [{ isActive: true }, { isDefault: true }],
+      },
+      data: { isActive: false, isDefault: false },
+    });
+    if (retired.count > 0) {
+      for (const tpl of toRetire) {
+        await recordCertificateAudit(db, {
+          action: 'template.archived',
+          actorId: null,
+          entityType: 'template',
+          entityId: tpl.id,
+          data: {
+            key: tpl.key,
+            reason: 'Replaced by ASRA QUIZORA 2026 — Certificate of Participation template.',
+          },
+        });
+      }
+    }
+  }
+
+  if (!defaultId) {
+    const primary =
+      ACTIVE_CERTIFICATE_TEMPLATES.find((t) => t.isDefault) ?? ACTIVE_CERTIFICATE_TEMPLATES[0];
+    const target = primary
+      ? await db.certificateTemplate.findUnique({
+          where: { key: primary.key },
+          select: { id: true, isActive: true },
+        })
+      : null;
+    if (target?.isActive) {
+      await db.certificateTemplate.updateMany({
+        where: { id: { not: target.id }, isDefault: true },
+        data: { isDefault: false },
       });
+      await db.certificateTemplate.update({
+        where: { id: target.id },
+        data: { isDefault: true },
+      });
+      defaultId = target.id;
+      activeIds.add(target.id);
     }
   }
 
   if (!existingSettings) {
-    const defaultTpl = await db.certificateTemplate.findFirst({
-      where: { isDefault: true },
-      select: { id: true },
-    });
-    const fallbackTpl =
-      defaultTpl ??
-      (await db.certificateTemplate.findUnique({
-        where: { key: 'classic-institutional' },
-        select: { id: true },
-      }));
-
     await db.certificateSettings.upsert({
       where: { id: 'default' },
       update: {},
-      create: {
-        id: 'default',
-        defaultTemplateId: fallbackTpl?.id ?? null,
-      },
+      create: { id: 'default', defaultTemplateId: defaultId },
+    });
+  } else if (
+    defaultId &&
+    (!existingSettings.defaultTemplateId || !activeIds.has(existingSettings.defaultTemplateId))
+  ) {
+    await db.certificateSettings.update({
+      where: { id: 'default' },
+      data: { defaultTemplateId: defaultId },
     });
   }
 }
@@ -219,6 +283,9 @@ export async function toTemplateDto(row: TemplateWithSignatures): Promise<Certif
     key: row.key,
     name: row.name,
     style: row.style,
+    category: certificateTemplateCategoryOf(row.style),
+    requiredSignatureCount: requiredSignatureCountForStyle(row.style),
+    isRetired: isRetiredTemplateKey(row.key),
     description: row.description,
     defaultTitle: row.defaultTitle,
     defaultSubtitle: row.defaultSubtitle,
@@ -256,6 +323,8 @@ const VALID_TEMPLATE_STYLES = new Set<CertificateTemplateStyle>([
   'CLASSIC_INSTITUTIONAL',
   'MODERN_MINIMAL',
   'PREMIUM_ACHIEVEMENT',
+  'QUIZORA_PARTICIPATION',
+  'QUIZORA_PARTICIPATION_DESIGN_2',
 ]);
 
 export function resolveCertificateLifecycleStatus(
@@ -304,7 +373,7 @@ export function parseTemplateSnapshot(
   raw: Prisma.JsonValue | null | undefined,
   legacyFallback?: { certificateTitle?: string | null; description?: string | null },
 ): CertificateTemplateSnapshotDto {
-  const classic = INITIAL_CERTIFICATE_TEMPLATES[0]!;
+  const classic = LEGACY_CERTIFICATE_TEMPLATES[0]!;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return {
       templateId: null,
@@ -400,7 +469,9 @@ export function toCertificateDto(
     certificateTitle: cert.certificateTitle,
     courseTitle: cert.courseTitle,
     description: cert.description,
-    achievementDetails: cert.achievementDetails,
+    achievementDetails: isArtworkCertificateStyle(templateSnapshot.style)
+      ? null
+      : cert.achievementDetails,
     completedAt: cert.completedAt.toISOString(),
     issuedAt: cert.issuedAt.toISOString(),
     status: cert.status,
@@ -464,7 +535,9 @@ export function toAdminCertificateListItem(
     certificateTitle: row.certificateTitle,
     courseTitle: row.courseTitle,
     description: row.description,
-    achievementDetails: row.achievementDetails,
+    achievementDetails: isArtworkCertificateStyle(templateSnapshot.style)
+      ? null
+      : row.achievementDetails,
     completedAt: row.completedAt.toISOString(),
     issuedAt: row.issuedAt.toISOString(),
     status: row.status,
